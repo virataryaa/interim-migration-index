@@ -73,10 +73,16 @@ tab and the Snapshot tab's extra columns.
 
 - **`Code/ingest_lseg.py`** — pulls all 13 commodities' Long/Short/OI/Price
   history from LSEG, computes `Index Net`, `Nominal Net USD`
-  (= Index Net × Price × Multiplier), and `Net Pct OI`. `--full` for a full
+  (= Index Net × Price × Multiplier), and `Net Pct OI`. Also persists the
+  full daily price series (fetched anyway at `interval="daily"`, previously
+  discarded down to the weekly CFTC dates) to `daily_prices.parquet`, used
+  for the Index in VaR tab's realized-volatility calc. `--full` for a full
   2016-01-01 backfill, no flag for a 30-day incremental refresh.
 - **`Database/index_positioning.parquet`** — one row per commodity per
   (weekly-cadence) date.
+- **`Database/daily_prices.parquet`** — one row per commodity per trading
+  day (Commodity, Date, Price) — daily granularity, used only for realized
+  volatility (the main dataset stays weekly, matching the CFTC report).
 - **`Dashboard/app.py`** — four tabs (consolidated from an earlier six-tab
   layout that spread the same information across overlapping views):
   - **Snapshot** — Target vs Actual weight bar chart (By Commodity or By
@@ -94,6 +100,16 @@ tab and the Snapshot tab's extra columns.
     Over/Under-vs-target lots chart (Softs/Grains/Oilseeds/Livestock/Custom
     selector), a scrollable weekly %-of-weight deviation table across all
     13 commodities, and a target-weight/RIC reference expander.
+  - **Index in VaR** — Index Traders' Net/Long/Short lots converted to a
+    1-day 99% dollar VaR (`Price × Multiplier × realized Vol(20/60/120D) ×
+    2.3263`) — the exact formula COT_ALL's `cot_app.py` ("Specs in VaR" tab)
+    uses for Managed Money, so passive Index risk can be compared to active
+    Spec risk on the same $-risk scale, not just by raw lots or notional $
+    (which ignore how volatile each market is). A cross-commodity bar chart
+    (By Commodity or By Group), a master table, and a Net-VaR-over-time
+    chart. Volatility is computed from our own daily LSEG price pull
+    (`Database/daily_prices.parquet`) rather than Rollex, since Rollex's
+    daily data only covers the 7 ICE softs and this project tracks all 13.
   - **Per-Commodity Detail** — Long/Short/Net, % of OI, nominal $ for one
     selected commodity.
 

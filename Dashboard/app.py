@@ -67,6 +67,60 @@ def load_data() -> pd.DataFrame:
     df["Date"] = pd.to_datetime(df["Date"])
     return df.sort_values(["Commodity", "Date"])
 
+VAR_Z = 2.3263  # 99% one-tailed confidence — same constant COT_ALL's Spec VaR uses
+
+@st.cache_data(ttl=1800)
+def load_daily_prices() -> pd.DataFrame:
+    d = pd.read_parquet(DB / "daily_prices.parquet")
+    d["Date"] = pd.to_datetime(d["Date"])
+    return d.sort_values(["Commodity", "Date"])
+
+@st.cache_data(ttl=1800)
+def compute_daily_vol(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """Rolling 20/60/120-day realized volatility of daily returns, per
+    commodity — same methodology as COT_ALL's Spec VaR (_build_var_df in
+    cot_app.py), but sourced from our own daily LSEG pull so all 13
+    commodities are covered (Rollex's daily data only covers the 7 ICE
+    softs)."""
+    px = daily_df.pivot_table(index="Date", columns="Commodity", values="Price", aggfunc="last")
+    ret = px.ffill().pct_change(fill_method=None)
+    frames = []
+    for c in px.columns:
+        d = pd.DataFrame({"Date": px.index, "Commodity": c})
+        for w in (20, 60, 120):
+            d[f"vol_{w}"] = ret[c].rolling(w, min_periods=max(5, w // 4)).std().values
+        frames.append(d.dropna(subset=["vol_20", "vol_60", "vol_120"], how="all"))
+    return pd.concat(frames, ignore_index=True)
+
+@st.cache_data(ttl=1800)
+def compute_index_var(df: pd.DataFrame, vol_df: pd.DataFrame, all_commodities: list,
+                       vol_window: int) -> pd.DataFrame:
+    """Index Traders' Net/Long/Short lots converted into 1-day 99% VaR $ —
+    Price x Multiplier x realized-Vol(window) x Z — the exact same formula
+    COT_ALL's "Specs in VaR" tab uses for Managed Money, so Index money's
+    risk footprint can be compared on the same scale as Spec money's,
+    rather than only by raw lots or notional $ (which ignore volatility)."""
+    vcol = f"vol_{vol_window}"
+    frames = []
+    for c in all_commodities:
+        dc = df[df["Commodity"] == c].sort_values("Date")
+        vc = vol_df[vol_df["Commodity"] == c][["Date", vcol]].dropna().sort_values("Date")
+        if dc.empty or vc.empty:
+            continue
+        m = pd.merge_asof(dc, vc, on="Date", direction="backward").dropna(subset=[vcol])
+        if m.empty:
+            continue
+        vpl = m["Price"] * m["Multiplier"] * m[vcol] * VAR_Z
+        m = m.assign(**{
+            "VaR Per Lot": vpl,
+            "Net VaR USD": m["Index Net"] * vpl,
+            "Long VaR USD": m["Index Long"] * vpl,
+            "Short VaR USD": m["Index Short"] * vpl,
+        })
+        frames.append(m[["Commodity", "Date", "Price", vcol, "VaR Per Lot",
+                         "Net VaR USD", "Long VaR USD", "Short VaR USD"]])
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
 @st.cache_data(ttl=1800)
 def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
                        all_commodities: list) -> pd.DataFrame:
@@ -318,6 +372,51 @@ def build_snapshot_table_html(snap: pd.DataFrame, group_of: dict, colors: dict, 
               "<th>Nominal Net USD</th><th>Net Lots</th><th>Net % of OI</th></tr>")
     return f"{css}<div class='idxsnap-wrap'><table class='idxsnap'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
 
+def build_var_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict, group_order: list, vol_window: int) -> str:
+    tbl = tbl.copy()
+    tbl["_grp_rank"] = tbl["Commodity"].map(lambda c: group_order.index(group_of.get(c, "")) if group_of.get(c, "") in group_order else 99)
+    tbl = tbl.sort_values(["_grp_rank", "Net VaR USD"], ascending=[True, False])
+
+    css = """<style>
+      .idxvar-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px}
+      table.idxvar{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxvar th,table.idxvar td{padding:8px 14px;text-align:right;white-space:nowrap}
+      table.idxvar th:first-child,table.idxvar td:first-child,
+      table.idxvar th:nth-child(2),table.idxvar td:nth-child(2){text-align:left}
+      table.idxvar thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.68rem;text-transform:uppercase}
+      table.idxvar tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      .idxvar-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+      .idxvar-name{font-weight:600;color:#1d1d1f}
+      .idxvar-badge{padding:2px 9px;border-radius:9px;font-size:.68rem;font-weight:600}
+    </style>"""
+    vcol = f"vol_{vol_window}"
+    net_vmax = max(tbl["Net VaR USD"].abs().max(), 1)
+    rows = []
+    for _, r in tbl.iterrows():
+        grp = group_of.get(r["Commodity"], "")
+        bg, fg = GROUP_BADGE.get(grp, ("#eee", "#555"))
+        dot = colors.get(r["Commodity"], "#999")
+        net_color = "#16a34a" if r["Net VaR USD"] >= 0 else "#dc2626"
+        rows.append(
+            "<tr>"
+            f"<td><span class='idxvar-dot' style='background:{dot}'></span>"
+            f"<span class='idxvar-name'>{r['Commodity']}</span></td>"
+            f"<td><span class='idxvar-badge' style='background:{bg};color:{fg}'>{grp}</span></td>"
+            f"<td>${r['Price']:,.2f}</td>"
+            f"<td>{r[vcol]*100:.2f}%</td>"
+            f"<td>${r['VaR Per Lot']:,.0f}</td>"
+            f"<td style='{_diverging_cell_style(r['Net VaR USD']/1e6, net_vmax/1e6)}color:{net_color};font-weight:600'>"
+            f"${r['Net VaR USD']/1e6:+,.1f}M</td>"
+            f"<td style='color:#16a34a'>${r['Long VaR USD']/1e6:,.1f}M</td>"
+            f"<td style='color:#dc2626'>${r['Short VaR USD']/1e6:,.1f}M</td>"
+            "</tr>"
+        )
+    header = (f"<tr><th>Commodity</th><th>Group</th><th>Price</th><th>{vol_window}D Vol</th>"
+              "<th>VaR / Lot</th><th>Net VaR ($M)</th><th>Long VaR ($M)</th><th>Short VaR ($M)</th></tr>")
+    return f"{css}<div class='idxvar-wrap'><table class='idxvar'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
+
 df = load_data()
 all_commodities = sorted(df["Commodity"].unique(), key=lambda c: list(GROUP_OF.keys()).index(c) if c in GROUP_OF else 99)
 max_date = df["Date"].max()
@@ -335,8 +434,8 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
-tab_snapshot, tab_is, tab_should, tab_detail = st.tabs(
-    ["Snapshot", "What It Is", "What It Should Be", "Per-Commodity Detail"]
+tab_snapshot, tab_is, tab_should, tab_var, tab_detail = st.tabs(
+    ["Snapshot", "What It Is", "What It Should Be", "Index in VaR", "Per-Commodity Detail"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -458,6 +557,79 @@ with tab_should:
                 "| Total OI | `3CFTC<CFTC_CODE>OI` | `COMM_LAST` |\n"
                 "| Price | see README (`price_ric` per commodity) | `TRDPRC_1` |"
             )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INDEX IN VAR — Index Traders' lots converted to a 1-day 99% dollar VaR
+# (Price x Multiplier x realized Vol x Z), the same methodology COT_ALL's
+# "Specs in VaR" tab uses for Managed Money — so passive Index risk and
+# active Spec risk can be compared on the same $-risk scale, not just by
+# raw lots or notional $ (which ignore how volatile each market is).
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_var:
+    daily_px = load_daily_prices()
+    vol_df = compute_daily_vol(daily_px)
+    vol_window = st.radio("Vol Window", [20, 60, 120], horizontal=True,
+                          format_func=lambda x: f"{x}D", key="var_window")
+    var_df = compute_index_var(df, vol_df, all_commodities, vol_window)
+    var_latest = var_df[var_df["Date"] == var_df.groupby("Commodity")["Date"].transform("max")]
+
+    st.markdown(lbl(f"Net VaR ($M) — all 13 commodities, {vol_window}D vol"), unsafe_allow_html=True)
+    var_bar_level = st.radio("View", ["By Commodity", "By Group"], horizontal=True, key="var_bar_level")
+    vl = var_latest.copy()
+    vl["Net VaR M"] = vl["Net VaR USD"] / 1e6
+    if var_bar_level == "By Group":
+        vl["Group"] = vl["Commodity"].map(GROUP_OF)
+        bar_src = vl.groupby("Group")["Net VaR M"].sum().reindex(list(GROUPS.keys())).sort_values()
+        bar_y, bar_x, bar_colors = bar_src.index, bar_src.values, None
+    else:
+        bar_src = vl.sort_values("Net VaR M")
+        bar_y, bar_x = bar_src["Commodity"], bar_src["Net VaR M"]
+        bar_colors = [COLORS.get(c, NAVY) for c in bar_y]
+
+    fig_var = go.Figure()
+    fig_var.add_trace(go.Bar(y=bar_y, x=bar_x, orientation="h",
+                             marker_color=bar_colors if bar_colors else NAVY,
+                             hovertemplate="%{y}<br>Net VaR: $%{x:.1f}M<extra></extra>"))
+    fig_var.add_vline(x=0, line_color="#cccccc", line_width=1)
+    fig_var.update_layout(height=420 if var_bar_level == "By Commodity" else 260,
+                          xaxis=dict(title="Net VaR ($M, 1-day 99% confidence)", gridcolor="#f0f0f0"),
+                          showlegend=False, margin=dict(t=10, b=10, l=4, r=4), **_D)
+    st.plotly_chart(fig_var, use_container_width=True)
+
+    st.markdown(lbl("Master Table — VaR per commodity"), unsafe_allow_html=True)
+    if not var_latest.empty:
+        st.markdown(build_var_table_html(var_latest, GROUP_OF, COLORS, list(GROUPS.keys()), vol_window),
+                   unsafe_allow_html=True)
+
+    st.markdown(lbl("Net VaR ($M) Over Time"), unsafe_allow_html=True)
+    default_sel_var = [c for c in GROUPS["Softs"] if c in all_commodities]
+    sel_group_var = st.radio("Group", ["Softs", "Grains", "Oilseeds", "Livestock", "Custom"],
+                             horizontal=True, key="var_group")
+    if sel_group_var == "Custom":
+        sel_commodities_var = st.multiselect("Commodities", all_commodities, default=default_sel_var, key="var_custom")
+    else:
+        sel_commodities_var = [c for c in GROUPS[sel_group_var] if c in all_commodities]
+
+    fig_var_ts = base_fig(height=420, yaxis_title="Net VaR ($M)")
+    for comm in sel_commodities_var:
+        s = var_df[var_df["Commodity"] == comm].set_index("Date")["Net VaR USD"] / 1e6
+        if not s.empty:
+            fig_var_ts.add_trace(go.Scatter(x=s.index, y=s.values, name=comm,
+                                            line=dict(color=COLORS.get(comm), width=1.6),
+                                            hovertemplate=f"%{{x|%d %b %Y}}<br>{comm}: $%{{y:.1f}}M<extra></extra>"))
+    fig_var_ts.add_hline(y=0, line_color="#cccccc", line_width=1)
+    st.plotly_chart(fig_var_ts, use_container_width=True)
+
+    st.markdown(
+        "*Methodology: `Net VaR = Net Lots × Price × Multiplier × realized "
+        "daily volatility × 2.3263` (99% one-tailed confidence) — the same "
+        "formula COT_ALL's `cot_app.py` (\"Specs in VaR\" tab) uses for "
+        "Managed Money, so Index positioning can be compared to Spec "
+        "positioning on the same risk-adjusted $ scale. Volatility is "
+        "computed from our own daily LSEG price pull (`Database/daily_prices.parquet`), "
+        "not Rollex, so all 13 commodities are covered (Rollex's daily data "
+        "only spans the 7 ICE softs).*"
+    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PER-COMMODITY DETAIL

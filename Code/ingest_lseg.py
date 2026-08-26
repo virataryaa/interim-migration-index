@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 
 DB_DIR   = Path(__file__).parent.parent / "Database"
 OUT_FILE = DB_DIR / "index_positioning.parquet"
+DAILY_PRICE_FILE = DB_DIR / "daily_prices.parquet"
 START_FULL = "2016-01-01"
 
 # ── Commodity config ──────────────────────────────────────────────────────────
@@ -118,7 +119,7 @@ def _history(ld, ric: str, field: str, start: str, end: str, label: str) -> pd.S
     return None
 
 
-def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> pd.DataFrame:
+def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> tuple[pd.DataFrame, pd.Series | None]:
     code = cfg["cftc_code"]
     long_s  = _history(ld, f"4{code}PLNG", "COMM_LAST", start, end, f"{name} Index Long")
     time.sleep(1)
@@ -131,7 +132,7 @@ def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> pd.DataFr
 
     if long_s is None or short_s is None:
         log.error("  %s: missing Long/Short — skipping commodity", name)
-        return pd.DataFrame()
+        return pd.DataFrame(), px_s
 
     # px_s is a full DAILY series (not just the CFTC report's weekly dates).
     # If the exact report date (usually Tuesday) has no print, pull the
@@ -162,7 +163,7 @@ def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> pd.DataFr
     df["Target Weight Pct"] = cfg["target_weight_pct"]
     log.info("  %s -> %d rows, %s to %s", name, len(df),
              df["Date"].min().date() if len(df) else "—", df["Date"].max().date() if len(df) else "—")
-    return df
+    return df, px_s
 
 
 def main(full: bool):
@@ -183,9 +184,15 @@ def main(full: bool):
         log.info("Mode: INCREMENTAL | window: %s -> %s", start, end)
 
     frames = []
+    daily_frames = []
     for name, cfg in COMMODITIES.items():
         log.info("Fetching %s (CFTC %s)...", name, cfg["cftc_code"])
-        frames.append(fetch_commodity(ld, name, cfg, start, end))
+        weekly_df, daily_px = fetch_commodity(ld, name, cfg, start, end)
+        frames.append(weekly_df)
+        if daily_px is not None and not daily_px.empty:
+            d = daily_px.rename("Price").reset_index()
+            d.insert(0, "Commodity", name)
+            daily_frames.append(d)
 
     ld.close_session()
 
@@ -206,6 +213,23 @@ def main(full: bool):
     combined.to_parquet(OUT_FILE, index=False)
     log.info("Saved -> %s | %d rows | %d commodities", OUT_FILE.name, len(combined),
              combined["Commodity"].nunique())
+
+    # ── Daily price history — used to compute realized volatility for the
+    #    "Index in VaR" tab (same Price*Multiplier*Vol*Z methodology as
+    #    COT_ALL's Spec VaR, but sourced from our own LSEG pull so all 13
+    #    commodities are covered, not just the 7 Rollex/ICE ones). ─────────
+    if daily_frames:
+        new_daily = pd.concat(daily_frames, ignore_index=True)
+        if DAILY_PRICE_FILE.exists() and not full:
+            old_daily = pd.read_parquet(DAILY_PRICE_FILE)
+            combined_daily = pd.concat([old_daily, new_daily], ignore_index=True)
+            combined_daily = combined_daily.drop_duplicates(subset=["Commodity", "Date"], keep="last")
+        else:
+            combined_daily = new_daily
+        combined_daily = combined_daily.sort_values(["Commodity", "Date"]).reset_index(drop=True)
+        combined_daily.to_parquet(DAILY_PRICE_FILE, index=False)
+        log.info("Saved -> %s | %d rows | %d commodities", DAILY_PRICE_FILE.name, len(combined_daily),
+                 combined_daily["Commodity"].nunique())
 
 
 if __name__ == "__main__":
