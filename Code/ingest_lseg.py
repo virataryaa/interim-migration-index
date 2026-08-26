@@ -136,6 +136,10 @@ def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> pd.DataFr
     df = pd.concat({"Index Long": long_s, "Index Short": short_s,
                     "Total OI": oi_s, "Price": px_s}, axis=1)
     df = df.dropna(subset=["Index Long", "Index Short"], how="all")
+    n_missing_px = df["Price"].isna().sum()
+    if n_missing_px:
+        log.warning("  %s: %d/%d weeks had no price print — forward-filling", name, n_missing_px, len(df))
+        df["Price"] = df["Price"].ffill()
     df["Index Net"] = df["Index Long"] - df["Index Short"]
     df["Nominal Net USD"] = df["Index Net"] * df["Price"] * cfg["multiplier"]
     df["Net Pct OI"] = (df["Index Net"] / df["Total OI"] * 100).where(df["Total OI"] > 0)
