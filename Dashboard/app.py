@@ -49,7 +49,8 @@ def base_fig(height=380, yaxis_title=None):
 
 GROUPS = {
     "Softs":     ["COTTON", "COCOA", "SUGAR", "COFFEE"],
-    "Grains":    ["SRW", "HRW", "CORN", "SOYBEAN", "BEAN OIL", "MEAL"],
+    "Grains":    ["SRW", "HRW", "CORN"],
+    "Oilseeds":  ["SOYBEAN", "BEAN OIL", "MEAL"],
     "Livestock": ["HOG", "LIVE", "FEEDER"],
 }
 GROUP_OF = {c: g for g, comms in GROUPS.items() for c in comms}
@@ -176,6 +177,7 @@ def _bar_style(v, vmax, color="rgba(10,36,99,.18)") -> str:
 GROUP_BADGE = {
     "Softs":     ("#fdf0e0", "#b45309"),
     "Grains":    ("#eaf3e0", "#3f6212"),
+    "Oilseeds":  ("#fef3c7", "#92722a"),
     "Livestock": ("#f0e6f5", "#7b2d8b"),
 }
 
@@ -260,7 +262,9 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
-tab_snapshot, tab_trends, tab_detail = st.tabs(["Snapshot", "Trends", "Per-Commodity Detail"])
+tab_snapshot, tab_is, tab_should, tab_detail = st.tabs(
+    ["Snapshot", "What It Is", "What It Should Be", "Per-Commodity Detail"]
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SNAPSHOT — target vs actual weight (bar) + one master table, every
@@ -295,10 +299,9 @@ with tab_snapshot:
     st.markdown(build_snapshot_table_html(snap, GROUP_OF, COLORS, list(GROUPS.keys())), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TRENDS — aggregate pool over time, weight deviation in lots, and the
-# weekly %-of-weight deviation table across all 13 commodities
+# WHAT IT IS — actual positioning over time, no target comparison
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_trends:
+with tab_is:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(lbl("Total Ags Net Index — USD"), unsafe_allow_html=True)
@@ -319,9 +322,14 @@ with tab_trends:
                                              hovertemplate=f"%{{x|%d %b %Y}}<br>{grp}: $%{{y:,.0f}}<extra></extra>"))
         st.plotly_chart(fig_grp, use_container_width=True)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT IT SHOULD BE — actual positioning vs the GSCI/BCOM target weight
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_should:
     st.markdown(lbl("Over / Under vs Target Weight (in lots)"), unsafe_allow_html=True)
     default_sel = [c for c in GROUPS["Softs"] if c in all_commodities]
-    sel_group = st.radio("Group", ["Softs", "Grains", "Livestock", "Custom"], horizontal=True, key="trend_group")
+    sel_group = st.radio("Group", ["Softs", "Grains", "Oilseeds", "Livestock", "Custom"],
+                         horizontal=True, key="trend_group")
     if sel_group == "Custom":
         sel_commodities = st.multiselect("Commodities", all_commodities, default=default_sel, key="trend_custom")
     else:
