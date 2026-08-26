@@ -203,7 +203,8 @@ def compute_nominal_attribution(df: pd.DataFrame, all_commodities: list, weeks_b
         driver_pct = (max(abs(net_effect), abs(px_effect)) / denom * 100) if denom else 50.0
         rows.append({
             "Commodity": c, "Nominal Net USD": t["Nominal Net USD"], "Total Change": total,
-            "Net Effect": net_effect, "Price Effect": px_effect,
+            "Net Lots Change": net_t - net_0, "Net Effect": net_effect,
+            "Price Change": px_t - px_0, "Price Effect": px_effect,
             "Driver": driver, "Driver Pct": driver_pct,
         })
     return pd.DataFrame(rows)
@@ -232,6 +233,8 @@ def build_attribution_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict
         net_color = "#16a34a" if r["Net Effect"] >= 0 else "#dc2626"
         px_color = "#16a34a" if r["Price Effect"] >= 0 else "#dc2626"
         badge_bg, badge_fg = ("#dbeafe", "#1e40af") if r["Driver"] == "Position" else ("#fce7d6", "#c2410c")
+        lots_color = "#16a34a" if r["Net Lots Change"] >= 0 else "#dc2626"
+        pxchg_color = "#16a34a" if r["Price Change"] >= 0 else "#dc2626"
         rows.append(
             "<tr>"
             f"<td><span class='idxattr-dot' style='background:{dot}'></span>"
@@ -239,14 +242,17 @@ def build_attribution_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict
             f"<td>${r['Nominal Net USD']:,.0f}</td>"
             f"<td style='{_diverging_cell_style(r['Total Change'], total_vmax)}color:{tot_color};font-weight:600'>"
             f"{r['Total Change']:+,.0f}</td>"
+            f"<td style='color:{lots_color}'>{r['Net Lots Change']:+,.0f}</td>"
             f"<td style='{_diverging_cell_style(r['Net Effect'], net_vmax)}color:{net_color}'>{r['Net Effect']:+,.0f}</td>"
+            f"<td style='color:{pxchg_color}'>{r['Price Change']:+,.2f}</td>"
             f"<td style='{_diverging_cell_style(r['Price Effect'], px_vmax)}color:{px_color}'>{r['Price Effect']:+,.0f}</td>"
             f"<td><span class='idxattr-badge' style='background:{badge_bg};color:{badge_fg}'>"
             f"{r['Driver']} ({r['Driver Pct']:.0f}%)</span></td>"
             "</tr>"
         )
     header = ("<tr><th>Commodity</th><th>Nominal Net USD</th><th>Total Change ($)</th>"
-              "<th>Net Effect ($)</th><th>Price Effect ($)</th><th>Primary Driver</th></tr>")
+              "<th>Net Lots Δ</th><th>Net Effect ($)</th><th>Price Δ</th><th>Price Effect ($)</th>"
+              "<th>Primary Driver</th></tr>")
     return f"{css}<div class='idxattr-wrap'><table class='idxattr'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
 
 def _diverging_cell_style(v, vmax) -> str:
@@ -440,8 +446,8 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
-tab_snapshot, tab_is, tab_should, tab_var, tab_detail = st.tabs(
-    ["Snapshot", "What It Is", "What It Should Be", "Index in VaR", "Per-Commodity Detail"]
+tab_is, tab_should, tab_snapshot, tab_var, tab_detail = st.tabs(
+    ["Index Positioning", "Vs Target", "Snapshot", "Index in VaR", "Detail"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -511,7 +517,12 @@ with tab_is:
 
     st.markdown(lbl("What's Driving the Nominal $ Change — Position vs Price"), unsafe_allow_html=True)
     lookback_opts = {"1 Week": 1, "4 Weeks": 4, "13 Weeks (Quarter)": 13, "52 Weeks (1 Year)": 52}
-    lookback_label = st.radio("Lookback", list(lookback_opts.keys()), index=1, horizontal=True, key="attr_lookback")
+    lookback_label = st.radio(
+        "Lookback", list(lookback_opts.keys()), index=1, horizontal=True, key="attr_lookback",
+        help=("Splits the $ change into a Position part (lots changing) and a Price part "
+              "(price moving), using the average price and average lots over the period so "
+              "both parts always add up exactly to the total. This is the Bennet decomposition."),
+    )
     attr_tbl = compute_nominal_attribution(df, all_commodities, lookback_opts[lookback_label])
     if not attr_tbl.empty:
         st.markdown(build_attribution_table_html(attr_tbl, GROUP_OF, COLORS), unsafe_allow_html=True)
