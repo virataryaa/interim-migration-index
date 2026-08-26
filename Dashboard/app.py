@@ -276,9 +276,11 @@ with tab_snapshot:
     bar_order = snap.sort_values("Target Weight Pct", ascending=True)
     fig_comp = go.Figure()
     fig_comp.add_trace(go.Bar(y=bar_order["Commodity"], x=bar_order["Target Weight Pct"],
-                              name="Target", orientation="h", marker_color=GREY, opacity=0.6))
+                              name="Target", orientation="h", marker_color=GREY, opacity=0.6,
+                              hovertemplate="%{y}<br>Target: %{x:.1f}%<extra></extra>"))
     fig_comp.add_trace(go.Bar(y=bar_order["Commodity"], x=bar_order["Actual Weight Pct"],
-                              name="Actual", orientation="h", marker_color=NAVY, opacity=0.85))
+                              name="Actual", orientation="h", marker_color=NAVY, opacity=0.85,
+                              hovertemplate="%{y}<br>Actual: %{x:.1f}%<extra></extra>"))
     fig_comp.update_layout(height=420, barmode="group",
                            xaxis=dict(title="% of Total Ags Index Pool", gridcolor="#f0f0f0"),
                            legend=dict(orientation="h", y=1.05, font=dict(size=9)),
@@ -302,7 +304,8 @@ with tab_trends:
         st.markdown(lbl("Total Ags Net Index — USD"), unsafe_allow_html=True)
         fig_total = base_fig(height=360, yaxis_title="Net Index Notional (USD)")
         fig_total.add_trace(go.Scatter(x=total_pool.index, y=total_pool.values,
-                                       line=dict(color=NAVY, width=1.8), name="Total Ags"))
+                                       line=dict(color=NAVY, width=1.8), name="Total Ags",
+                                       hovertemplate="%{x|%d %b %Y}<br>$%{y:,.0f}<extra></extra>"))
         fig_total.update_layout(showlegend=False)
         st.plotly_chart(fig_total, use_container_width=True)
     with c2:
@@ -312,7 +315,8 @@ with tab_trends:
             cols = [c for c in comms if c in pool.columns]
             if cols:
                 s = pool[cols].sum(axis=1, min_count=1)
-                fig_grp.add_trace(go.Scatter(x=s.index, y=s.values, name=grp, line=dict(width=1.6)))
+                fig_grp.add_trace(go.Scatter(x=s.index, y=s.values, name=grp, line=dict(width=1.6),
+                                             hovertemplate=f"%{{x|%d %b %Y}}<br>{grp}: $%{{y:,.0f}}<extra></extra>"))
         st.plotly_chart(fig_grp, use_container_width=True)
 
     st.markdown(lbl("Over / Under vs Target Weight (in lots)"), unsafe_allow_html=True)
@@ -329,7 +333,8 @@ with tab_trends:
         s = dev_df[dev_df["Commodity"] == comm].set_index("Date")["Deviation Lots"]
         if not s.empty:
             fig_dev.add_trace(go.Scatter(x=s.index, y=s.values, name=comm,
-                                         line=dict(color=COLORS.get(comm), width=1.6)))
+                                         line=dict(color=COLORS.get(comm), width=1.6),
+                                         hovertemplate=f"%{{x|%d %b %Y}}<br>{comm}: %{{y:,.0f}} lots<extra></extra>"))
     fig_dev.add_hline(y=0, line_color="#cccccc", line_width=1)
     st.plotly_chart(fig_dev, use_container_width=True)
 
@@ -366,22 +371,27 @@ with tab_detail:
 
     st.markdown(lbl(f"{comm_pick} — Index Long / Short (lots)"), unsafe_allow_html=True)
     fig_ls = base_fig(height=380, yaxis_title="Lots")
-    fig_ls.add_trace(go.Scatter(x=d.index, y=d["Index Long"], name="Index Long", line=dict(color=GREEN, width=1.4)))
-    fig_ls.add_trace(go.Scatter(x=d.index, y=d["Index Short"], name="Index Short", line=dict(color=RED, width=1.4)))
-    fig_ls.add_trace(go.Scatter(x=d.index, y=d["Index Net"], name="Net", line=dict(color=NAVY, width=2)))
+    fig_ls.add_trace(go.Scatter(x=d.index, y=d["Index Long"], name="Index Long", line=dict(color=GREEN, width=1.4),
+                                hovertemplate="%{x|%d %b %Y}<br>Index Long: %{y:,.0f}<extra></extra>"))
+    fig_ls.add_trace(go.Scatter(x=d.index, y=d["Index Short"], name="Index Short", line=dict(color=RED, width=1.4),
+                                hovertemplate="%{x|%d %b %Y}<br>Index Short: %{y:,.0f}<extra></extra>"))
+    fig_ls.add_trace(go.Scatter(x=d.index, y=d["Index Net"], name="Net", line=dict(color=NAVY, width=2),
+                                hovertemplate="%{x|%d %b %Y}<br>Net: %{y:,.0f}<extra></extra>"))
     st.plotly_chart(fig_ls, use_container_width=True)
 
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(lbl("Net as % of Total OI"), unsafe_allow_html=True)
         fig_pct = base_fig(height=340, yaxis_title="% of Total OI")
-        fig_pct.add_trace(go.Scatter(x=d.index, y=d["Net Pct OI"], line=dict(color=AMBER, width=1.6)))
+        fig_pct.add_trace(go.Scatter(x=d.index, y=d["Net Pct OI"], line=dict(color=AMBER, width=1.6),
+                                     hovertemplate="%{x|%d %b %Y}<br>%{y:.1f}%<extra></extra>"))
         fig_pct.add_hline(y=0, line_color="#cccccc", line_width=1)
         st.plotly_chart(fig_pct, use_container_width=True)
     with c2:
         st.markdown(lbl("Nominal Net Notional (USD)"), unsafe_allow_html=True)
         fig_nom = base_fig(height=340, yaxis_title="USD")
         fig_nom.add_trace(go.Scatter(x=d.index, y=d["Nominal Net USD"], line=dict(color=NAVY, width=1.6),
-                                     fill="tozeroy", fillcolor="rgba(10,36,99,0.07)"))
+                                     fill="tozeroy", fillcolor="rgba(10,36,99,0.07)",
+                                     hovertemplate="%{x|%d %b %Y}<br>$%{y:,.0f}<extra></extra>"))
         fig_nom.add_hline(y=0, line_color="#cccccc", line_width=1)
         st.plotly_chart(fig_nom, use_container_width=True)
