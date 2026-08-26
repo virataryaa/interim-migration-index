@@ -81,14 +81,20 @@ def compute_daily_vol(daily_df: pd.DataFrame) -> pd.DataFrame:
     commodity — same methodology as COT_ALL's Spec VaR (_build_var_df in
     cot_app.py), but sourced from our own daily LSEG pull so all 13
     commodities are covered (Rollex's daily data only covers the 7 ICE
-    softs)."""
-    px = daily_df.pivot_table(index="Date", columns="Commodity", values="Price", aggfunc="last")
-    ret = px.ffill().pct_change(fill_method=None)
+    softs). Computed on each commodity's OWN native trading-day sequence
+    (not pivoted to a shared calendar) — pivoting+ffill would insert an
+    artificial 0%-return day into a commodity's series on any date another
+    commodity traded but it didn't, understating its true volatility.
+    Cocoa's CCc1 series (the sparsest — ~18% of days missing vs. the union
+    calendar) showed up to an 8% vol understatement from this in past
+    gap-heavy periods when checked against this native-calendar version."""
     frames = []
-    for c in px.columns:
-        d = pd.DataFrame({"Date": px.index, "Commodity": c})
+    for c, g in daily_df.groupby("Commodity"):
+        g = g.sort_values("Date")
+        ret = g["Price"].pct_change()
+        d = pd.DataFrame({"Date": g["Date"].values, "Commodity": c})
         for w in (20, 60, 120):
-            d[f"vol_{w}"] = ret[c].rolling(w, min_periods=max(5, w // 4)).std().values
+            d[f"vol_{w}"] = ret.rolling(w, min_periods=max(5, w // 4)).std().values
         frames.append(d.dropna(subset=["vol_20", "vol_60", "vol_120"], how="all"))
     return pd.concat(frames, ignore_index=True)
 
@@ -619,17 +625,6 @@ with tab_var:
                                             hovertemplate=f"%{{x|%d %b %Y}}<br>{comm}: $%{{y:.1f}}M<extra></extra>"))
     fig_var_ts.add_hline(y=0, line_color="#cccccc", line_width=1)
     st.plotly_chart(fig_var_ts, use_container_width=True)
-
-    st.markdown(
-        "*Methodology: `Net VaR = Net Lots × Price × Multiplier × realized "
-        "daily volatility × 2.3263` (99% one-tailed confidence) — the same "
-        "formula COT_ALL's `cot_app.py` (\"Specs in VaR\" tab) uses for "
-        "Managed Money, so Index positioning can be compared to Spec "
-        "positioning on the same risk-adjusted $ scale. Volatility is "
-        "computed from our own daily LSEG price pull (`Database/daily_prices.parquet`), "
-        "not Rollex, so all 13 commodities are covered (Rollex's daily data "
-        "only spans the 7 ICE softs).*"
-    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PER-COMMODITY DETAIL
