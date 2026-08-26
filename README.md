@@ -63,10 +63,14 @@ source of the reference chart if the shape doesn't match.
   2016-01-01 backfill, no flag for a 30-day incremental refresh.
 - **`Database/index_positioning.parquet`** — one row per commodity per
   (weekly-cadence) date.
-- **`Dashboard/app.py`** — four tabs: Total Ags Index (aggregate $ pool,
-  2016–present), Weight Deviation (Lots), Composition vs Target (latest
-  actual vs target weight, all 13), Per-Commodity Detail (Long/Short/Net,
-  % of OI, nominal $).
+- **`Dashboard/app.py`** — five tabs: **Overview** (the original brief's
+  visuals together — Total Ags Net Index, Under/Over vs Start-of-Year
+  Weights, and a scrollable weekly %-of-weight deviation table across all
+  13 commodities, plus a target-weight/RIC reference expander), Total Ags
+  Index (aggregate $ pool, 2016–present), Weight Deviation (Lots),
+  Composition vs Target (latest actual vs target weight, all 13, as an
+  HTML-styled table), Per-Commodity Detail (Long/Short/Net, % of OI,
+  nominal $).
 - **`Automator/run.bat`** — runs the incremental ingest, commits + pushes
   `Database/` if changed, emails pass/fail via Outlook.
 

@@ -98,6 +98,103 @@ def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, all_commodities: lis
             dev_frames.append(gc[["Commodity", "Date", "Deviation Lots"]])
     return pd.concat(dev_frames, ignore_index=True) if dev_frames else pd.DataFrame()
 
+@st.cache_data(ttl=1800)
+def compute_weekly_deviation_pct(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
+                                  all_commodities: list) -> pd.DataFrame:
+    """Actual $-share of the pool minus each commodity's (constant) GSCI/BCOM
+    target weight, at every date — the simple %-of-weight deviation (distinct
+    from the static Jan-reference *lots* deviation in compute_deviation())."""
+    target_pct = df.drop_duplicates("Commodity").set_index("Commodity")["Target Weight Pct"]
+    actual_pct = pool.div(total_pool, axis=0) * 100
+    cols = [c for c in all_commodities if c in actual_pct.columns]
+    dev = actual_pct[cols].sub(target_pct.reindex(cols), axis=1)
+    return dev
+
+def _diverging_cell_style(v, vmax) -> str:
+    if pd.isna(v) or not vmax:
+        return ""
+    half = min(abs(v) / vmax, 1.0) * 50
+    if v >= 0:
+        lo, hi, color = 50, 50 + half, "rgba(22,163,74,0.28)"
+    else:
+        lo, hi, color = 50 - half, 50, "rgba(220,38,38,0.28)"
+    return f"background:linear-gradient(to right, transparent {lo:.1f}%, {color} {lo:.1f}%, {color} {hi:.1f}%, transparent {hi:.1f}%);"
+
+def build_weekly_deviation_html(dev_tail: pd.DataFrame, commodities: list, group_of: dict) -> str:
+    css = """<style>
+      .idxdev-wrap{overflow:auto;max-height:640px;border:1px solid #e5e7eb;border-radius:6px}
+      table.idxdev{border-collapse:collapse;width:100%;font-size:.72rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif;white-space:nowrap}
+      table.idxdev th,table.idxdev td{padding:3px 8px;text-align:center}
+      table.idxdev thead th{position:sticky;top:0;background:#0a2463;color:#dde4f0;font-weight:500;
+        letter-spacing:.03em;z-index:2;font-size:.66rem;text-transform:uppercase}
+      table.idxdev td.date-cell{position:sticky;left:0;background:#fafafa;font-weight:500;
+        color:#1d1d1f;text-align:left;z-index:1;box-shadow:1px 0 0 #e5e7eb}
+      table.idxdev th.date-head{position:sticky;left:0;top:0;z-index:3;text-align:left;background:#0a2463}
+      table.idxdev tbody tr:nth-child(even) td:not(.date-cell){background-color:rgba(0,0,0,.015)}
+      table.idxdev td.grp-start,table.idxdev th.grp-start{box-shadow:inset 2px 0 0 #c7cdd6}
+      table.idxdev td.date-cell.grp-start{box-shadow:1px 0 0 #e5e7eb}
+    </style>"""
+    header_cells, prev_grp = ["<th class='date-head'>Date</th>"], None
+    for c in commodities:
+        grp = group_of.get(c, "")
+        cls = " class='grp-start'" if prev_grp is not None and grp != prev_grp else ""
+        header_cells.append(f"<th{cls}>{c}</th>")
+        prev_grp = grp
+    vmax = {c: max(dev_tail[c].abs().max(), 0.01) if c in dev_tail.columns else 0.01 for c in commodities}
+
+    body_rows = []
+    for dt, row in dev_tail.sort_index(ascending=False).iterrows():
+        cells, prev_grp = [f"<td class='date-cell'>{dt.strftime('%d %b %Y')}</td>"], None
+        for c in commodities:
+            grp = group_of.get(c, "")
+            cls = "grp-start" if prev_grp is not None and grp != prev_grp else ""
+            v = row.get(c, np.nan)
+            if pd.isna(v):
+                cells.append(f"<td class='{cls}'></td>")
+            else:
+                style = _diverging_cell_style(v, vmax[c])
+                color = "#16a34a" if v >= 0 else "#dc2626"
+                cells.append(f"<td class='{cls}' style='{style}color:{color};font-weight:600'>{v:+.2f}</td>")
+            prev_grp = grp
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    return (f"{css}<div class='idxdev-wrap'><table class='idxdev'><thead><tr>"
+            f"{''.join(header_cells)}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>")
+
+def build_composition_table_html(tbl: pd.DataFrame) -> str:
+    css = """<style>
+      .idxcomp-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:6px}
+      table.idxcomp{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxcomp th,table.idxcomp td{padding:6px 14px;text-align:right}
+      table.idxcomp th:first-child,table.idxcomp td:first-child{text-align:left}
+      table.idxcomp thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.7rem;text-transform:uppercase}
+      table.idxcomp tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      table.idxcomp td.name-cell{font-weight:600;color:#1d1d1f}
+    </style>"""
+    dev_vmax = max(tbl["Deviation Pp"].abs().max(), 0.01)
+    nom_vmax = max(tbl["Nominal Net USD"].abs().max(), 1)
+    rows = []
+    for _, r in tbl.iterrows():
+        dev_style = _diverging_cell_style(r["Deviation Pp"], dev_vmax)
+        dev_color = "#16a34a" if r["Deviation Pp"] >= 0 else "#dc2626"
+        nom_style = _diverging_cell_style(r["Nominal Net USD"], nom_vmax)
+        nom_color = "#16a34a" if r["Nominal Net USD"] >= 0 else "#dc2626"
+        rows.append(
+            "<tr>"
+            f"<td class='name-cell'>{r['Commodity']}</td>"
+            f"<td>{r['Target Weight Pct']:.1f}%</td>"
+            f"<td>{r['Actual Weight Pct']:.1f}%</td>"
+            f"<td style='{dev_style}color:{dev_color};font-weight:600'>{r['Deviation Pp']:+.2f}pp</td>"
+            f"<td style='{nom_style}color:{nom_color};font-weight:600'>${r['Nominal Net USD']:,.0f}</td>"
+            "</tr>"
+        )
+    header = ("<tr><th>Commodity</th><th>Target Weight</th><th>Actual Weight</th>"
+              "<th>Deviation</th><th>Nominal Net USD</th></tr>")
+    return f"{css}<div class='idxcomp-wrap'><table class='idxcomp'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
+
 df = load_data()
 all_commodities = sorted(df["Commodity"].unique(), key=lambda c: list(GROUP_OF.keys()).index(c) if c in GROUP_OF else 99)
 max_date = df["Date"].max()
@@ -115,9 +212,64 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
-tab_total, tab_dev, tab_comp, tab_detail = st.tabs(
-    ["Total Ags Index", "Weight Deviation (Lots)", "Composition vs Target", "Per-Commodity Detail"]
+tab_overview, tab_total, tab_dev, tab_comp, tab_detail = st.tabs(
+    ["Overview", "Total Ags Index", "Weight Deviation (Lots)", "Composition vs Target", "Per-Commodity Detail"]
 )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OVERVIEW — the original brief's visuals in one place: Total Ags Net Index,
+# Under/Over vs Start-of-Year Weights, and the weekly %-of-weight deviation
+# table across all 13 commodities, plus the target-weight / RIC reference.
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_overview:
+    st.markdown(lbl("Total Ags Net Index — CFTC Index Traders, USD"), unsafe_allow_html=True)
+    fig_ov_total = base_fig(height=380, yaxis_title="Net Index Notional (USD)")
+    fig_ov_total.add_trace(go.Scatter(x=total_pool.index, y=total_pool.values,
+                                      line=dict(color=NAVY, width=1.8), name="Total Ags"))
+    fig_ov_total.update_layout(showlegend=False)
+    st.plotly_chart(fig_ov_total, use_container_width=True)
+
+    st.markdown(lbl("Under / Over vs Start-of-Year Weights (in lots)"), unsafe_allow_html=True)
+    default_sel_ov = [c for c in GROUPS["Softs"] if c in all_commodities]
+    sel_group_ov = st.radio("Group", ["Softs", "Grains", "Livestock", "Custom"], horizontal=True, key="ov_group")
+    if sel_group_ov == "Custom":
+        sel_commodities_ov = st.multiselect("Commodities", all_commodities, default=default_sel_ov, key="ov_custom")
+    else:
+        sel_commodities_ov = [c for c in GROUPS[sel_group_ov] if c in all_commodities]
+
+    dev_df_ov = compute_deviation(df, pool, all_commodities)
+    fig_ov_dev = base_fig(height=420, yaxis_title="Deviation from Start-of-Year Target (lots)")
+    for comm in sel_commodities_ov:
+        s = dev_df_ov[dev_df_ov["Commodity"] == comm].set_index("Date")["Deviation Lots"]
+        if not s.empty:
+            fig_ov_dev.add_trace(go.Scatter(x=s.index, y=s.values, name=comm,
+                                            line=dict(color=COLORS.get(comm), width=1.6)))
+    fig_ov_dev.add_hline(y=0, line_color="#cccccc", line_width=1)
+    st.plotly_chart(fig_ov_dev, use_container_width=True)
+
+    st.markdown(lbl("Weekly Deviation vs Target Weight (percentage points)"), unsafe_allow_html=True)
+    weekly_dev = compute_weekly_deviation_pct(df, pool, total_pool, all_commodities)
+    n_weeks = st.slider("Weeks shown", min_value=8, max_value=min(104, len(weekly_dev)),
+                        value=min(52, len(weekly_dev)), step=4, key="ov_weeks")
+    st.markdown(build_weekly_deviation_html(weekly_dev.tail(n_weeks), all_commodities, GROUP_OF),
+               unsafe_allow_html=True)
+
+    with st.expander("Target weights & CFTC RIC reference"):
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            st.markdown("**GSCI/BCOM target weight (ag-only, re-weighted)**")
+            wt_ref = df.drop_duplicates("Commodity")[["Commodity", "Target Weight Pct"]].copy()
+            wt_ref["Target Weight Pct"] = wt_ref["Target Weight Pct"].map(lambda v: f"{v:.1f}%")
+            st.dataframe(wt_ref, use_container_width=True, hide_index=True)
+        with rc2:
+            st.markdown("**CFTC CIT RIC scheme**")
+            st.markdown(
+                "| Series | RIC pattern | Field |\n|---|---|---|\n"
+                "| Index Long | `4<CFTC_CODE>PLNG` | `COMM_LAST` |\n"
+                "| Index Short | `4<CFTC_CODE>PSHT` | `COMM_LAST` |\n"
+                "| Total OI | `3CFTC<CFTC_CODE>OI` | `COMM_LAST` |\n"
+                "| Price | `<ROOT>c2` (2nd-month) | `TRDPRC_1` |"
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOTAL AGS INDEX — aggregate passive-money notional, all 13 commodities
@@ -202,11 +354,7 @@ with tab_comp:
     st.markdown(lbl("Deviation Table (percentage points)"), unsafe_allow_html=True)
     tbl = latest[["Commodity", "Target Weight Pct", "Actual Weight Pct", "Deviation Pp", "Nominal Net USD"]].copy()
     tbl = tbl.sort_values("Deviation Pp", ascending=False)
-    tbl["Target Weight Pct"] = tbl["Target Weight Pct"].map(lambda v: f"{v:.1f}%")
-    tbl["Actual Weight Pct"] = tbl["Actual Weight Pct"].map(lambda v: f"{v:.1f}%")
-    tbl["Deviation Pp"] = tbl["Deviation Pp"].map(lambda v: f"{v:+.2f}pp")
-    tbl["Nominal Net USD"] = tbl["Nominal Net USD"].map(lambda v: f"${v:,.0f}")
-    st.dataframe(tbl, use_container_width=True, hide_index=True)
+    st.markdown(build_composition_table_html(tbl), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PER-COMMODITY DETAIL
