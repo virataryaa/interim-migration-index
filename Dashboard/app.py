@@ -116,6 +116,79 @@ def compute_weekly_deviation_pct(df: pd.DataFrame, pool: pd.DataFrame, total_poo
     dev = actual_pct[cols].sub(target_pct.reindex(cols), axis=1)
     return dev
 
+@st.cache_data(ttl=1800)
+def compute_nominal_attribution(df: pd.DataFrame, all_commodities: list, weeks_back: int) -> pd.DataFrame:
+    """Splits the change in Nominal Net USD over `weeks_back` weeks into a
+    position-driven part (lots changed) and a price-driven part (price
+    moved), using the average/midpoint (Bennet) decomposition — the two
+    parts sum EXACTLY to the total change, with no leftover interaction
+    term: Net Effect = M*(Net_t-Net_0)*(Price_t+Price_0)/2,
+    Price Effect = M*(Price_t-Price_0)*(Net_t+Net_0)/2."""
+    rows = []
+    for c in all_commodities:
+        d = df[df["Commodity"] == c].sort_values("Date")
+        if len(d) <= weeks_back:
+            continue
+        t, t0 = d.iloc[-1], d.iloc[-1 - weeks_back]
+        m = t["Multiplier"]
+        net_t, net_0 = t["Index Net"], t0["Index Net"]
+        px_t, px_0 = t["Price"], t0["Price"]
+        if pd.isna(px_t) or pd.isna(px_0):
+            continue
+        net_effect = m * (net_t - net_0) * (px_t + px_0) / 2
+        px_effect = m * (px_t - px_0) * (net_t + net_0) / 2
+        total = net_effect + px_effect
+        denom = abs(net_effect) + abs(px_effect)
+        driver = "Position" if abs(net_effect) >= abs(px_effect) else "Price"
+        driver_pct = (max(abs(net_effect), abs(px_effect)) / denom * 100) if denom else 50.0
+        rows.append({
+            "Commodity": c, "Nominal Net USD": t["Nominal Net USD"], "Total Change": total,
+            "Net Effect": net_effect, "Price Effect": px_effect,
+            "Driver": driver, "Driver Pct": driver_pct,
+        })
+    return pd.DataFrame(rows)
+
+def build_attribution_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict) -> str:
+    css = """<style>
+      .idxattr-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px}
+      table.idxattr{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxattr th,table.idxattr td{padding:7px 14px;text-align:right;white-space:nowrap}
+      table.idxattr th:first-child,table.idxattr td:first-child{text-align:left}
+      table.idxattr thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.68rem;text-transform:uppercase}
+      table.idxattr tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      .idxattr-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+      .idxattr-name{font-weight:600;color:#1d1d1f}
+      .idxattr-badge{padding:2px 9px;border-radius:9px;font-size:.68rem;font-weight:600}
+    </style>"""
+    total_vmax = max(tbl["Total Change"].abs().max(), 1)
+    net_vmax = max(tbl["Net Effect"].abs().max(), 1)
+    px_vmax = max(tbl["Price Effect"].abs().max(), 1)
+    rows = []
+    for _, r in tbl.sort_values("Total Change", ascending=False).iterrows():
+        dot = colors.get(r["Commodity"], "#999")
+        tot_color = "#16a34a" if r["Total Change"] >= 0 else "#dc2626"
+        net_color = "#16a34a" if r["Net Effect"] >= 0 else "#dc2626"
+        px_color = "#16a34a" if r["Price Effect"] >= 0 else "#dc2626"
+        badge_bg, badge_fg = ("#dbeafe", "#1e40af") if r["Driver"] == "Position" else ("#fce7d6", "#c2410c")
+        rows.append(
+            "<tr>"
+            f"<td><span class='idxattr-dot' style='background:{dot}'></span>"
+            f"<span class='idxattr-name'>{r['Commodity']}</span></td>"
+            f"<td>${r['Nominal Net USD']:,.0f}</td>"
+            f"<td style='{_diverging_cell_style(r['Total Change'], total_vmax)}color:{tot_color};font-weight:600'>"
+            f"{r['Total Change']:+,.0f}</td>"
+            f"<td style='{_diverging_cell_style(r['Net Effect'], net_vmax)}color:{net_color}'>{r['Net Effect']:+,.0f}</td>"
+            f"<td style='{_diverging_cell_style(r['Price Effect'], px_vmax)}color:{px_color}'>{r['Price Effect']:+,.0f}</td>"
+            f"<td><span class='idxattr-badge' style='background:{badge_bg};color:{badge_fg}'>"
+            f"{r['Driver']} ({r['Driver Pct']:.0f}%)</span></td>"
+            "</tr>"
+        )
+    header = ("<tr><th>Commodity</th><th>Nominal Net USD</th><th>Total Change ($)</th>"
+              "<th>Net Effect ($)</th><th>Price Effect ($)</th><th>Primary Driver</th></tr>")
+    return f"{css}<div class='idxattr-wrap'><table class='idxattr'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
+
 def _diverging_cell_style(v, vmax) -> str:
     if pd.isna(v) or not vmax:
         return ""
@@ -321,6 +394,13 @@ with tab_is:
                 fig_grp.add_trace(go.Scatter(x=s.index, y=s.values, name=grp, line=dict(width=1.6),
                                              hovertemplate=f"%{{x|%d %b %Y}}<br>{grp}: $%{{y:,.0f}}<extra></extra>"))
         st.plotly_chart(fig_grp, use_container_width=True)
+
+    st.markdown(lbl("What's Driving the Nominal $ Change — Position vs Price"), unsafe_allow_html=True)
+    lookback_opts = {"1 Week": 1, "4 Weeks": 4, "13 Weeks (Quarter)": 13, "52 Weeks (1 Year)": 52}
+    lookback_label = st.radio("Lookback", list(lookback_opts.keys()), index=1, horizontal=True, key="attr_lookback")
+    attr_tbl = compute_nominal_attribution(df, all_commodities, lookback_opts[lookback_label])
+    if not attr_tbl.empty:
+        st.markdown(build_attribution_table_html(attr_tbl, GROUP_OF, COLORS), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WHAT IT SHOULD BE — actual positioning vs the GSCI/BCOM target weight

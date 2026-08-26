@@ -85,7 +85,9 @@ tab and the Snapshot tab's extra columns.
     latest date.
   - **What It Is** — actual positioning only, no target comparison: Total
     Ags Net Index and By-Group breakdown (Softs/Grains/Oilseeds/Livestock)
-    side by side.
+    side by side, plus a Position-vs-Price attribution table (1/4/13/52-week
+    lookback) that splits each commodity's Nominal $ change into how much
+    came from lots changing vs price moving.
   - **What It Should Be** — actual vs the GSCI/BCOM target: the
     Over/Under-vs-target lots chart (Softs/Grains/Oilseeds/Livestock/Custom
     selector), a scrollable weekly %-of-weight deviation table across all
