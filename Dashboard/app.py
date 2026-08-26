@@ -583,6 +583,9 @@ with tab_should:
 # raw lots or notional $ (which ignore how volatile each market is).
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_var:
+    st.latex(r"\text{Net VaR} = \text{Net Lots} \times \text{Price} \times \text{Multiplier} \times \sigma_{\text{daily}} \times Z_{99\%}")
+    st.caption("σ = realized daily volatility (rolling 20/60/120D std of daily returns), Z₉₉% = 2.3263 (1-day, 99% one-tailed confidence)")
+
     daily_px = load_daily_prices()
     vol_df = compute_daily_vol(daily_px)
     vol_window = st.radio("Vol Window", [20, 60, 120], horizontal=True,
