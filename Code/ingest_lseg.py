@@ -133,12 +133,22 @@ def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> pd.DataFr
         log.error("  %s: missing Long/Short — skipping commodity", name)
         return pd.DataFrame()
 
+    # px_s is a full DAILY series (not just the CFTC report's weekly dates).
+    # If the exact report date (usually Tuesday) has no print, pull the
+    # closest trading day within 3 days (Monday/Wednesday) instead of
+    # reusing a stale price from a prior week.
+    if px_s is not None:
+        px_s = px_s.sort_index()
+        px_aligned = px_s.reindex(long_s.index, method="nearest", tolerance=pd.Timedelta(days=3))
+    else:
+        px_aligned = None
+
     df = pd.concat({"Index Long": long_s, "Index Short": short_s,
-                    "Total OI": oi_s, "Price": px_s}, axis=1)
+                    "Total OI": oi_s, "Price": px_aligned}, axis=1)
     df = df.dropna(subset=["Index Long", "Index Short"], how="all")
     n_missing_px = df["Price"].isna().sum()
     if n_missing_px:
-        log.warning("  %s: %d/%d weeks had no price print — forward-filling", name, n_missing_px, len(df))
+        log.warning("  %s: %d/%d weeks still had no price within 3 days — forward-filling", name, n_missing_px, len(df))
         df["Price"] = df["Price"].ffill()
     df["Index Net"] = df["Index Long"] - df["Index Short"]
     df["Nominal Net USD"] = df["Index Net"] * df["Price"] * cfg["multiplier"]
