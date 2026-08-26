@@ -394,17 +394,6 @@ with tab_total:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_dev:
     st.markdown(lbl("Over / Under vs Target Weight (in lots)"), unsafe_allow_html=True)
-    st.markdown(
-        "Methodology (verified against the source workbook): the target weight "
-        "is a fixed constant, re-derived once a year at the GSCI/BCOM rebalance "
-        "— it is *not* re-anchored per date. At every date: "
-        "`Deviation % = Actual Weight % − Target Weight %`, then "
-        "`Deviation $ = Deviation % × Total Pool`, then "
-        "`Deviation Lots = Deviation $ ÷ (Price × Multiplier)` at that date's "
-        "own price. Negative means real positioning is running below what the "
-        "target weight implies (due scheduled *buying* at the next rebalance); "
-        "positive means it's running above (due scheduled *selling*)."
-    )
 
     default_sel = [c for c in GROUPS["Softs"] if c in all_commodities]
     sel_group = st.radio("Group", ["Softs", "Grains", "Livestock", "Custom"], horizontal=True, key="dev_group")
