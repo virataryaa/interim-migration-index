@@ -67,36 +67,41 @@ def load_data() -> pd.DataFrame:
     return df.sort_values(["Commodity", "Date"])
 
 @st.cache_data(ttl=1800)
-def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, all_commodities: list) -> pd.DataFrame:
-    """Static Jan-reference lot count implied by each commodity's target
-    weight vs the actual pool size that year, held constant for the year,
-    compared against actual reported net lots. See tab_dev's markdown for
-    the full explanation — this is the expensive part, so it's cached."""
-    df = df.copy()
-    df["Year"] = df["Date"].dt.year
-    dev_frames = []
-    for year, g in df.groupby("Year"):
-        ref_date = g["Date"].min()
-        if ref_date not in pool.index:
-            continue
-        ref_pool_total = pool.loc[ref_date].sum(skipna=True)
-        if not ref_pool_total or pd.isna(ref_pool_total):
-            continue
-        for comm in all_commodities:
-            gc = g[g["Commodity"] == comm]
-            if gc.empty:
-                continue
-            ref_price_row = gc[gc["Date"] == ref_date]
-            if ref_price_row.empty or pd.isna(ref_price_row["Price"].iloc[0]):
-                continue
-            ref_price = ref_price_row["Price"].iloc[0]
-            multiplier = ref_price_row["Multiplier"].iloc[0]
-            target_pct = ref_price_row["Target Weight Pct"].iloc[0]
-            ref_lots = (target_pct / 100 * ref_pool_total) / (ref_price * multiplier)
-            gc = gc.copy()
-            gc["Deviation Lots"] = gc["Index Net"] - ref_lots
-            dev_frames.append(gc[["Commodity", "Date", "Deviation Lots"]])
-    return pd.concat(dev_frames, ignore_index=True) if dev_frames else pd.DataFrame()
+def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
+                       all_commodities: list) -> pd.DataFrame:
+    """Verified against the source workbook's RECAP sheet — the target weight
+    is a fixed constant (re-derived once a year at the GSCI/BCOM rebalance,
+    not re-anchored per date), and at every single date:
+      Deviation %   = Actual Weight % - Target Weight %          (RECAP: CL = BQ-BQ$2)
+      Deviation USD = Deviation % / 100 * Total Pool              (RECAP: CY = CL*BP)
+      Deviation Lots= Deviation USD / (Price * Multiplier)        (RECAP: DL = CL*BP/O)
+      Deviation %OI = Deviation Lots / Total OI                   (RECAP: DY = DL/AB)
+    No annual anchoring/hold-static step — this replaces an earlier, incorrect
+    from-scratch reconstruction that invented a static Jan-reference lot count.
+    """
+    cols = [c for c in all_commodities if c in pool.columns]
+    price = df.pivot_table(index="Date", columns="Commodity", values="Price", aggfunc="last")[cols]
+    oi = df.pivot_table(index="Date", columns="Commodity", values="Total OI", aggfunc="last")[cols]
+    ref = df.drop_duplicates("Commodity").set_index("Commodity")
+    target_pct = ref["Target Weight Pct"].reindex(cols)
+    multiplier = ref["Multiplier"].reindex(cols)
+
+    actual_pct = pool[cols].div(total_pool, axis=0) * 100
+    dev_pct = actual_pct.sub(target_pct, axis=1)
+    dev_usd = dev_pct.div(100).mul(total_pool, axis=0)
+    dev_lots = dev_usd / price.mul(multiplier, axis=1)
+    dev_pct_oi = dev_lots.div(oi) * 100
+
+    frames = []
+    for c in cols:
+        frames.append(pd.DataFrame({
+            "Commodity": c, "Date": dev_pct.index,
+            "Deviation Pct": dev_pct[c].values,
+            "Deviation USD": dev_usd[c].values,
+            "Deviation Lots": dev_lots[c].values,
+            "Deviation Pct OI": dev_pct_oi[c].values,
+        }))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 @st.cache_data(ttl=1800)
 def compute_weekly_deviation_pct(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
@@ -233,6 +238,8 @@ def build_snapshot_table_html(snap: pd.DataFrame, group_of: dict, colors: dict, 
     oi_vmax = max(snap["Net Pct OI"].abs().max(), 0.01)
     dev_vmax = max(snap["Deviation Pp"].abs().max(), 0.01)
     nom_vmax = max(snap["Nominal Net USD"].abs().max(), 1)
+    devlots_vmax = max(snap["Deviation Lots"].abs().max(), 1)
+    devoi_vmax = max(snap["Deviation Pct OI"].abs().max(), 0.01)
 
     rows = []
     for _, r in snap.iterrows():
@@ -243,15 +250,21 @@ def build_snapshot_table_html(snap: pd.DataFrame, group_of: dict, colors: dict, 
         arrow = "&#9650;" if r["Deviation Pp"] >= 0 else "&#9660;"
         nom_color = "#16a34a" if r["Nominal Net USD"] >= 0 else "#dc2626"
         lots_color = "#16a34a" if r["Index Net"] >= 0 else "#dc2626"
+        devlots_color = "#16a34a" if r["Deviation Lots"] >= 0 else "#dc2626"
+        devoi_color = "#16a34a" if r["Deviation Pct OI"] >= 0 else "#dc2626"
         rows.append(
             "<tr>"
             f"<td><span class='idxsnap-dot' style='background:{dot}'></span>"
             f"<span class='idxsnap-name'>{r['Commodity']}</span></td>"
             f"<td><span class='idxsnap-badge' style='background:{bg};color:{fg}'>{grp}</span></td>"
-            f"<td>{r['Target Weight Pct']:.1f}%</td>"
-            f"<td style='{_bar_style(r['Actual Weight Pct'], aw_vmax)}'>{r['Actual Weight Pct']:.1f}%</td>"
+            f"<td>{r['Target Weight Pct']:.2f}%</td>"
+            f"<td style='{_bar_style(r['Actual Weight Pct'], aw_vmax)}'>{r['Actual Weight Pct']:.2f}%</td>"
             f"<td style='{_diverging_cell_style(r['Deviation Pp'], dev_vmax)}color:{dev_color};font-weight:600'>"
             f"{arrow} {r['Deviation Pp']:+.2f}pp</td>"
+            f"<td style='{_diverging_cell_style(r['Deviation Lots'], devlots_vmax)}color:{devlots_color};font-weight:600'>"
+            f"{r['Deviation Lots']:+,.0f}</td>"
+            f"<td style='{_diverging_cell_style(r['Deviation Pct OI'], devoi_vmax)}color:{devoi_color};font-weight:600'>"
+            f"{r['Deviation Pct OI']:+.2f}%</td>"
             f"<td style='{_diverging_cell_style(r['Nominal Net USD'], nom_vmax)}color:{nom_color};font-weight:600'>"
             f"${r['Nominal Net USD']:,.0f}</td>"
             f"<td style='color:{lots_color}'>{r['Index Net']:+,.0f}</td>"
@@ -259,7 +272,8 @@ def build_snapshot_table_html(snap: pd.DataFrame, group_of: dict, colors: dict, 
             "</tr>"
         )
     header = ("<tr><th>Commodity</th><th>Group</th><th>Target %</th><th>Actual %</th>"
-              "<th>Deviation</th><th>Nominal Net USD</th><th>Net Lots</th><th>Net % of OI</th></tr>")
+              "<th>Deviation (pp)</th><th>Deviation (lots)</th><th>Deviation (% of OI)</th>"
+              "<th>Nominal Net USD</th><th>Net Lots</th><th>Net % of OI</th></tr>")
     return f"{css}<div class='idxsnap-wrap'><table class='idxsnap'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
 
 df = load_data()
@@ -296,7 +310,7 @@ with tab_overview:
     fig_ov_total.update_layout(showlegend=False)
     st.plotly_chart(fig_ov_total, use_container_width=True)
 
-    st.markdown(lbl("Under / Over vs Start-of-Year Weights (in lots)"), unsafe_allow_html=True)
+    st.markdown(lbl("Over / Under vs Target Weight (in lots)"), unsafe_allow_html=True)
     default_sel_ov = [c for c in GROUPS["Softs"] if c in all_commodities]
     sel_group_ov = st.radio("Group", ["Softs", "Grains", "Livestock", "Custom"], horizontal=True, key="ov_group")
     if sel_group_ov == "Custom":
@@ -304,8 +318,8 @@ with tab_overview:
     else:
         sel_commodities_ov = [c for c in GROUPS[sel_group_ov] if c in all_commodities]
 
-    dev_df_ov = compute_deviation(df, pool, all_commodities)
-    fig_ov_dev = base_fig(height=420, yaxis_title="Deviation from Start-of-Year Target (lots)")
+    dev_df_ov = compute_deviation(df, pool, total_pool, all_commodities)
+    fig_ov_dev = base_fig(height=420, yaxis_title="Deviation from Target Weight (lots)")
     for comm in sel_commodities_ov:
         s = dev_df_ov[dev_df_ov["Commodity"] == comm].set_index("Date")["Deviation Lots"]
         if not s.empty:
@@ -347,6 +361,11 @@ with tab_snapshot:
     snap_total = snap["Nominal Net USD"].sum(skipna=True)
     snap["Actual Weight Pct"] = snap["Nominal Net USD"] / snap_total * 100
     snap["Deviation Pp"] = snap["Actual Weight Pct"] - snap["Target Weight Pct"]
+
+    dev_latest = compute_deviation(df, pool, total_pool, all_commodities)
+    dev_latest = dev_latest[dev_latest["Date"] == max_date][["Commodity", "Deviation Lots", "Deviation Pct OI"]]
+    snap = snap.merge(dev_latest, on="Commodity", how="left")
+
     st.markdown(build_snapshot_table_html(snap, GROUP_OF, COLORS, list(GROUPS.keys())), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -370,22 +389,21 @@ with tab_total:
     st.plotly_chart(fig_grp, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# WEIGHT DEVIATION (LOTS) — actual net lots vs a static Jan-reference lot
-# count implied by each commodity's target weight
+# WEIGHT DEVIATION (LOTS) — actual $ share of the pool vs each commodity's
+# fixed GSCI/BCOM target weight, converted to lots at that date's price
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_dev:
-    st.markdown(lbl("Under / Over vs Start-of-Year Weights (in lots)"), unsafe_allow_html=True)
+    st.markdown(lbl("Over / Under vs Target Weight (in lots)"), unsafe_allow_html=True)
     st.markdown(
-        "Methodology: at the first available date each year, the total actual "
-        "Index-Trader pool ($) across all 13 commodities is taken as the "
-        "reference pool size. Each commodity's *target* lot count is back-solved "
-        "from its GSCI/BCOM target weight against that reference pool and that "
-        "date's price — then held static for the rest of the year (no further "
-        "rebalancing assumed until the next January). The gap between that "
-        "static reference and the commodity's *actual* reported net lots is "
-        "what's plotted — growing more negative means real positioning has "
-        "fallen further below what the target weight implied; growing positive "
-        "means it's run further above."
+        "Methodology (verified against the source workbook): the target weight "
+        "is a fixed constant, re-derived once a year at the GSCI/BCOM rebalance "
+        "— it is *not* re-anchored per date. At every date: "
+        "`Deviation % = Actual Weight % − Target Weight %`, then "
+        "`Deviation $ = Deviation % × Total Pool`, then "
+        "`Deviation Lots = Deviation $ ÷ (Price × Multiplier)` at that date's "
+        "own price. Negative means real positioning is running below what the "
+        "target weight implies (due scheduled *buying* at the next rebalance); "
+        "positive means it's running above (due scheduled *selling*)."
     )
 
     default_sel = [c for c in GROUPS["Softs"] if c in all_commodities]
@@ -395,9 +413,9 @@ with tab_dev:
     else:
         sel_commodities = [c for c in GROUPS[sel_group] if c in all_commodities]
 
-    dev_df = compute_deviation(df, pool, all_commodities)
+    dev_df = compute_deviation(df, pool, total_pool, all_commodities)
 
-    fig_dev = base_fig(height=480, yaxis_title="Deviation from Start-of-Year Target (lots)")
+    fig_dev = base_fig(height=480, yaxis_title="Deviation from Target Weight (lots)")
     for comm in sel_commodities:
         s = dev_df[dev_df["Commodity"] == comm].set_index("Date")["Deviation Lots"]
         if not s.empty:

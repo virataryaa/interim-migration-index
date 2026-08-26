@@ -37,23 +37,29 @@ verified live for every commodity.
 
 ## The weight-deviation methodology
 
-`target_weight_pct` per commodity (in `Code/ingest_lseg.py`'s `COMMODITIES`
-dict) comes from the provided GSCI 2026 / BCOM 2026 60/40 blend, re-weighted
-to the ag-only subset (the "Used" row on the reference sheet). **Re-derive
-these at each January GSCI/BCOM rebalance** — they are 2026 weights, not a
-permanent constant.
+**Verified line-by-line against the source workbook** (`Index Monitoring.xlsx`,
+`RECAP` sheet) on 2026-08-26 — this replaced an earlier, unverified
+reconstruction that used a static January-reference lot count. The real
+formula does no such per-year anchoring:
 
-The Dashboard's "Weight Deviation (Lots)" tab: at the first available date
-each year, the total actual Index-Trader pool ($) across all 13 commodities
-is taken as that year's reference pool size. Each commodity's *target* lot
-count is back-solved from its target weight against that reference pool and
-that date's price, then held static for the rest of the year (no further
-rebalancing assumed until the next January). What's plotted is actual
-reported net lots minus that static reference — this is a specific,
-documented interpretation of "deviation from start-of-year weights," not
-verbatim from the brief (which described the concept but not the exact
-reference-point formula), so it's worth checking against the original
-source of the reference chart if the shape doesn't match.
+`target_weight_pct` per commodity (in `Code/ingest_lseg.py`'s `COMMODITIES`
+dict) is the exact "Used" row from the workbook's "GSCI and BCOM weights"
+sheet — full precision, not rounded (rounding to whole numbers previously
+summed to 101% instead of 100%). It is a **fixed constant** — re-derived
+once a year at the GSCI/BCOM January rebalance, but never re-anchored
+per-date the way the earlier version assumed.
+
+At every date (workbook `RECAP` cell refs in parens):
+1. `Actual Weight % = Nominal Net USD ÷ Total Pool × 100` (`BQ = BC/$BP`)
+2. `Deviation % = Actual Weight % − Target Weight %` (`CL = BQ-BQ$2`)
+3. `Deviation $ = Deviation % ÷ 100 × Total Pool` (`CY = CL*BP`)
+4. `Deviation Lots = Deviation $ ÷ (Price × Multiplier)` at that date's own
+   price (`DL = CL*BP/O`)
+5. `Deviation % of OI = Deviation Lots ÷ Total OI × 100` (`DY = DL/AB`)
+
+All five are computed fresh at every date — none of them hold anything
+static across the year. Steps 4 and 5 feed the "Weight Deviation (Lots)"
+tab and the Snapshot tab's extra columns.
 
 ## What's here
 
