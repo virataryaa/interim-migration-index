@@ -15,25 +15,33 @@ next rebalance; one running below is due scheduled *buying*.
 13 ag commodities from the CFTC CIT report: SRW, HRW, Corn, Soybean, Bean
 Oil, Meal, Cotton, Hog, Live Cattle, Feeder Cattle, Cocoa, Sugar, Coffee.
 
-All verified live against LSEG (2026-08-26):
+All verified live against LSEG:
 
 | Series | RIC pattern | Field |
 |---|---|---|
 | Index Long | `4<CFTC_CODE>PLNG` | `COMM_LAST` |
 | Index Short | `4<CFTC_CODE>PSHT` | `COMM_LAST` |
 | Total OI | `3CFTC<CFTC_CODE>OI` | `COMM_LAST` |
-| Price | `<ROOT>c2` (2nd-month continuation) | `TRDPRC_1` |
+| Price | see `price_ric` per commodity below | `TRDPRC_1` |
 
 This is the exact same RIC family and field names the COT_ALL project's
 `cot_lseg_backfill.py` already uses in production for KC/CC/SB/CT — this
 project just widens the same pattern to all 13 ag commodities and pulls the
 Index Traders category instead of MM/Producer/Swap.
 
-**Price RIC note:** the original reference sheet used a mix of `v1`/`c2`
-tickers (`Wv1`, `KWc2`, `CTv1`, `KCv1`, ...); several of the `v1` tickers
-(`CTv1`, `KCv1`, `CCv1`, `SBv1`) came back `Access Denied` against this
-account's entitlements. `<ROOT>c2` is used uniformly for all 13 instead —
-verified live for every commodity.
+**Price RIC — verified 2026-08-26 against the source workbook's raw `DATA`
+sheet.** CFTC Long/Short/OI matched byte-for-byte for all 13 commodities on
+the first attempt; only price needed fixing. The workbook's `TICKER` sheet
+specifies a *mix* of `v1` (most-active/volume-based) and `c2` (calendar
+2nd-month) per commodity — not `c2` uniformly, which an earlier version of
+this project assumed after a few `v1` tickers came back `Access Denied`:
+
+| Commodity | `price_ric` used | Why |
+|---|---|---|
+| SRW, Corn, Soybean, Bean Oil | `Wv1`/`Cv1`/`Sv1`/`BOv1` | the workbook's own ticker — directly accessible, matches to <0.1% |
+| HRW, Meal, Hog, Live, Feeder | `KWc2`/`SMc2`/`LHc2`/`LCc2`/`FCc2` | the workbook's own ticker (already `c2`) |
+| Cotton, Coffee | `CTc2`/`KCc2` | workbook wants `CTv1`/`KCv1`, both `Access Denied` on this account; `c2` already matches closely (<0.3%) |
+| Cocoa, Sugar | `CCc1`/`SBc1` | workbook wants `CCv1`/`SBv1`, both `Access Denied`; `c2` was off by ~2.7%/~6%, but `c1` (front-month) matches to <0.02% |
 
 ## The weight-deviation methodology
 

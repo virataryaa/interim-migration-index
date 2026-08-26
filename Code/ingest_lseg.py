@@ -57,20 +57,37 @@ START_FULL = "2016-01-01"
 # re-weighted to the ag-only subset so the 13 sum to 100%) — full precision,
 # not rounded to whole numbers. Re-derive at each January GSCI/BCOM rebalance
 # — these are 2026 weights, not a permanent constant.
+#
+# price_ric: verified 2026-08-26 against the source workbook's raw DATA
+# sheet (13/13 CFTC Long/Short/OI already matched byte-for-byte; only price
+# differed). The workbook's TICKER sheet specifies a mix of v1 (most-active/
+# volume-based front-ish contract) and c2 (calendar 2nd-month) per commodity
+# — NOT c2 uniformly, which is what an earlier version of this file assumed
+# after several v1 tickers came back Access Denied on first pass. Re-checked
+# ticker-by-ticker this time:
+#   - Wv1, Cv1, Sv1, BOv1 (SRW/Corn/Soybean/Bean Oil) ARE accessible on this
+#     account and match the workbook closely — used directly.
+#   - KWc2, SMc2, LHc2, LCc2, FCc2 (HRW/Meal/Hog/Live/Feeder) are what the
+#     workbook itself specifies — unchanged, already matched well.
+#   - CTv1, KCv1, CCv1, SBv1 (Cotton/Coffee/Cocoa/Sugar) are genuinely
+#     Access Denied on this account. For Cotton/Coffee, c2 already matched
+#     the workbook closely, so it's kept as the fallback. For Cocoa/Sugar,
+#     c2 was off by ~2.7%/~6%; c1 (front-month) matched to within ~0.02% —
+#     so c1 is used as the accessible proxy for those two specifically.
 COMMODITIES = {
-    "SRW":      {"cftc_code": "001602", "price_root": "W",  "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 8.0368},
-    "HRW":      {"cftc_code": "001612", "price_root": "KW", "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 4.6636},
-    "CORN":     {"cftc_code": "002602", "price_root": "C",  "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 16.0161},
-    "SOYBEAN":  {"cftc_code": "005602", "price_root": "S",  "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 12.7899},
-    "BEAN OIL": {"cftc_code": "007601", "price_root": "BO", "lot_size": 60000, "unit": "USc", "multiplier": 600, "target_weight_pct": 3.6031},
-    "MEAL":     {"cftc_code": "026603", "price_root": "SM", "lot_size": 100,   "unit": "USD", "multiplier": 100, "target_weight_pct": 3.7437},
-    "COTTON":   {"cftc_code": "033661", "price_root": "CT", "lot_size": 50000, "unit": "USc", "multiplier": 500, "target_weight_pct": 3.7181},
-    "HOG":      {"cftc_code": "054642", "price_root": "LH", "lot_size": 40000, "unit": "USc", "multiplier": 400, "target_weight_pct": 8.6182},
-    "LIVE":     {"cftc_code": "057642", "price_root": "LC", "lot_size": 40000, "unit": "USc", "multiplier": 400, "target_weight_pct": 14.8981},
-    "FEEDER":   {"cftc_code": "061641", "price_root": "FC", "lot_size": 50000, "unit": "USc", "multiplier": 500, "target_weight_pct": 5.1364},
-    "COCOA":    {"cftc_code": "073732", "price_root": "CC", "lot_size": 10,    "unit": "USD", "multiplier": 10,  "target_weight_pct": 4.4464},
-    "SUGAR":    {"cftc_code": "080732", "price_root": "SB", "lot_size": 112000,"unit": "USc", "multiplier": 1120,"target_weight_pct": 7.0657},
-    "COFFEE":   {"cftc_code": "083731", "price_root": "KC", "lot_size": 37500, "unit": "USc", "multiplier": 375, "target_weight_pct": 7.2638},
+    "SRW":      {"cftc_code": "001602", "price_ric": "Wv1",  "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 8.0368},
+    "HRW":      {"cftc_code": "001612", "price_ric": "KWc2", "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 4.6636},
+    "CORN":     {"cftc_code": "002602", "price_ric": "Cv1",  "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 16.0161},
+    "SOYBEAN":  {"cftc_code": "005602", "price_ric": "Sv1",  "lot_size": 5000,  "unit": "USc", "multiplier": 50,  "target_weight_pct": 12.7899},
+    "BEAN OIL": {"cftc_code": "007601", "price_ric": "BOv1", "lot_size": 60000, "unit": "USc", "multiplier": 600, "target_weight_pct": 3.6031},
+    "MEAL":     {"cftc_code": "026603", "price_ric": "SMc2", "lot_size": 100,   "unit": "USD", "multiplier": 100, "target_weight_pct": 3.7437},
+    "COTTON":   {"cftc_code": "033661", "price_ric": "CTc2", "lot_size": 50000, "unit": "USc", "multiplier": 500, "target_weight_pct": 3.7181},
+    "HOG":      {"cftc_code": "054642", "price_ric": "LHc2", "lot_size": 40000, "unit": "USc", "multiplier": 400, "target_weight_pct": 8.6182},
+    "LIVE":     {"cftc_code": "057642", "price_ric": "LCc2", "lot_size": 40000, "unit": "USc", "multiplier": 400, "target_weight_pct": 14.8981},
+    "FEEDER":   {"cftc_code": "061641", "price_ric": "FCc2", "lot_size": 50000, "unit": "USc", "multiplier": 500, "target_weight_pct": 5.1364},
+    "COCOA":    {"cftc_code": "073732", "price_ric": "CCc1", "lot_size": 10,    "unit": "USD", "multiplier": 10,  "target_weight_pct": 4.4464},
+    "SUGAR":    {"cftc_code": "080732", "price_ric": "SBc1", "lot_size": 112000,"unit": "USc", "multiplier": 1120,"target_weight_pct": 7.0657},
+    "COFFEE":   {"cftc_code": "083731", "price_ric": "KCc2", "lot_size": 37500, "unit": "USc", "multiplier": 375, "target_weight_pct": 7.2638},
 }
 
 FETCH_RETRIES = 3
@@ -109,7 +126,7 @@ def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> pd.DataFr
     time.sleep(1)
     oi_s    = _history(ld, f"3CFTC{code}OI", "COMM_LAST", start, end, f"{name} Total OI")
     time.sleep(1)
-    px_s    = _history(ld, f"{cfg['price_root']}c2", "TRDPRC_1", start, end, f"{name} Price")
+    px_s    = _history(ld, cfg["price_ric"], "TRDPRC_1", start, end, f"{name} Price")
     time.sleep(1)
 
     if long_s is None or short_s is None:
