@@ -77,16 +77,18 @@ tab and the Snapshot tab's extra columns.
   2016-01-01 backfill, no flag for a 30-day incremental refresh.
 - **`Database/index_positioning.parquet`** — one row per commodity per
   (weekly-cadence) date.
-- **`Dashboard/app.py`** — six tabs: **Overview** (the original brief's
-  visuals together — Total Ags Net Index, Under/Over vs Start-of-Year
-  Weights, and a scrollable weekly %-of-weight deviation table across all
-  13 commodities, plus a target-weight/RIC reference expander), **Snapshot**
-  (one master HTML table — every commodity's group, target %, actual %,
-  deviation, $ notional, net lots, and % of OI side by side, at the latest
-  date), Total Ags Index (aggregate $ pool, 2016–present), Weight Deviation
-  (Lots), Composition vs Target (latest actual vs target weight, all 13, as
-  an HTML-styled table), Per-Commodity Detail (Long/Short/Net, % of OI,
-  nominal $).
+- **`Dashboard/app.py`** — three tabs (consolidated from an earlier six-tab
+  layout that spread the same information across overlapping views):
+  - **Snapshot** — Target vs Actual weight bar chart, plus a master HTML
+    table with every commodity's group, target %, actual %, deviation ($,
+    lots, %OI), nominal $, net lots, and % of OI side by side, at the
+    latest date.
+  - **Trends** — Total Ags Net Index and By-Group breakdown side by side,
+    the Over/Under-vs-target lots chart (Softs/Grains/Livestock/Custom
+    selector), a scrollable weekly %-of-weight deviation table across all
+    13 commodities, and a target-weight/RIC reference expander.
+  - **Per-Commodity Detail** — Long/Short/Net, % of OI, nominal $ for one
+    selected commodity.
 - **`Automator/run.bat`** — runs the incremental ingest, commits + pushes
   `Database/` if changed, emails pass/fail via Outlook.
 
