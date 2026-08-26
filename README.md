@@ -79,10 +79,12 @@ tab and the Snapshot tab's extra columns.
   (weekly-cadence) date.
 - **`Dashboard/app.py`** — four tabs (consolidated from an earlier six-tab
   layout that spread the same information across overlapping views):
-  - **Snapshot** — Target vs Actual weight bar chart, plus a master HTML
-    table with every commodity's group, target %, actual %, deviation ($,
-    lots, %OI), nominal $, net lots, and % of OI side by side, at the
-    latest date.
+  - **Snapshot** — Target vs Actual weight bar chart (By Commodity or By
+    Group — group-level target/actual % are a plain sum of member
+    commodities' %, since every commodity's % already shares the same
+    denominator, Total Pool $), plus a master HTML table with every
+    commodity's group, target %, actual %, deviation ($, lots, %OI),
+    nominal $, net lots, and % of OI side by side, at the latest date.
   - **What It Is** — actual positioning only, no target comparison: Total
     Ags Net Index and By-Group breakdown (Softs/Grains/Oilseeds/Livestock)
     side by side, plus a Position-vs-Price attribution table (1/4/13/52-week

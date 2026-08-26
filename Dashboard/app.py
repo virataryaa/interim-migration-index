@@ -350,15 +350,24 @@ with tab_snapshot:
     snap["Actual Weight Pct"] = snap["Nominal Net USD"] / snap_total * 100
     snap["Deviation Pp"] = snap["Actual Weight Pct"] - snap["Target Weight Pct"]
 
-    bar_order = snap.sort_values("Target Weight Pct", ascending=True)
+    bar_level = st.radio("View", ["By Commodity", "By Group"], horizontal=True, key="snap_bar_level")
+    if bar_level == "By Group":
+        snap["Group"] = snap["Commodity"].map(GROUP_OF)
+        bar_src = snap.groupby("Group")[["Target Weight Pct", "Actual Weight Pct"]].sum()
+        bar_src = bar_src.reindex(list(GROUPS.keys())).sort_values("Target Weight Pct", ascending=True)
+        bar_y = bar_src.index
+    else:
+        bar_src = snap.sort_values("Target Weight Pct", ascending=True)
+        bar_y = bar_src["Commodity"]
+
     fig_comp = go.Figure()
-    fig_comp.add_trace(go.Bar(y=bar_order["Commodity"], x=bar_order["Target Weight Pct"],
+    fig_comp.add_trace(go.Bar(y=bar_y, x=bar_src["Target Weight Pct"],
                               name="Target", orientation="h", marker_color=GREY, opacity=0.6,
                               hovertemplate="%{y}<br>Target: %{x:.1f}%<extra></extra>"))
-    fig_comp.add_trace(go.Bar(y=bar_order["Commodity"], x=bar_order["Actual Weight Pct"],
+    fig_comp.add_trace(go.Bar(y=bar_y, x=bar_src["Actual Weight Pct"],
                               name="Actual", orientation="h", marker_color=NAVY, opacity=0.85,
                               hovertemplate="%{y}<br>Actual: %{x:.1f}%<extra></extra>"))
-    fig_comp.update_layout(height=420, barmode="group",
+    fig_comp.update_layout(height=420 if bar_level == "By Commodity" else 260, barmode="group",
                            xaxis=dict(title="% of Total Ags Index Pool", gridcolor="#f0f0f0"),
                            legend=dict(orientation="h", y=1.05, font=dict(size=9)),
                            margin=dict(t=10, b=10, l=4, r=4), **_D)
