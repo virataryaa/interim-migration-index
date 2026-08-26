@@ -195,6 +195,73 @@ def build_composition_table_html(tbl: pd.DataFrame) -> str:
               "<th>Deviation</th><th>Nominal Net USD</th></tr>")
     return f"{css}<div class='idxcomp-wrap'><table class='idxcomp'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
 
+def _bar_style(v, vmax, color="rgba(10,36,99,.18)") -> str:
+    if pd.isna(v) or not vmax:
+        return ""
+    pct = min(abs(v) / vmax, 1.0) * 100
+    return f"background:linear-gradient(to right, {color} {pct:.1f}%, transparent {pct:.1f}%);"
+
+GROUP_BADGE = {
+    "Softs":     ("#fdf0e0", "#b45309"),
+    "Grains":    ("#eaf3e0", "#3f6212"),
+    "Livestock": ("#f0e6f5", "#7b2d8b"),
+}
+
+def build_snapshot_table_html(snap: pd.DataFrame, group_of: dict, colors: dict, group_order: list) -> str:
+    snap = snap.copy()
+    snap["_grp_rank"] = snap["Commodity"].map(lambda c: group_order.index(group_of.get(c, "")) if group_of.get(c, "") in group_order else 99)
+    snap = snap.sort_values(["_grp_rank", "Target Weight Pct"], ascending=[True, False])
+
+    css = """<style>
+      .idxsnap-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px;
+        box-shadow:0 1px 3px rgba(0,0,0,.04)}
+      table.idxsnap{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxsnap th,table.idxsnap td{padding:8px 14px;text-align:right;white-space:nowrap}
+      table.idxsnap th:first-child,table.idxsnap td:first-child,
+      table.idxsnap th:nth-child(2),table.idxsnap td:nth-child(2){text-align:left}
+      table.idxsnap thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.68rem;text-transform:uppercase}
+      table.idxsnap tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      table.idxsnap tbody tr:hover td{background-color:rgba(10,36,99,.05)}
+      .idxsnap-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+      .idxsnap-name{font-weight:600;color:#1d1d1f}
+      .idxsnap-badge{padding:2px 9px;border-radius:9px;font-size:.68rem;font-weight:600}
+    </style>"""
+
+    aw_vmax = max(snap["Actual Weight Pct"].abs().max(), 0.01)
+    oi_vmax = max(snap["Net Pct OI"].abs().max(), 0.01)
+    dev_vmax = max(snap["Deviation Pp"].abs().max(), 0.01)
+    nom_vmax = max(snap["Nominal Net USD"].abs().max(), 1)
+
+    rows = []
+    for _, r in snap.iterrows():
+        grp = group_of.get(r["Commodity"], "")
+        bg, fg = GROUP_BADGE.get(grp, ("#eee", "#555"))
+        dot = colors.get(r["Commodity"], "#999")
+        dev_color = "#16a34a" if r["Deviation Pp"] >= 0 else "#dc2626"
+        arrow = "&#9650;" if r["Deviation Pp"] >= 0 else "&#9660;"
+        nom_color = "#16a34a" if r["Nominal Net USD"] >= 0 else "#dc2626"
+        lots_color = "#16a34a" if r["Index Net"] >= 0 else "#dc2626"
+        rows.append(
+            "<tr>"
+            f"<td><span class='idxsnap-dot' style='background:{dot}'></span>"
+            f"<span class='idxsnap-name'>{r['Commodity']}</span></td>"
+            f"<td><span class='idxsnap-badge' style='background:{bg};color:{fg}'>{grp}</span></td>"
+            f"<td>{r['Target Weight Pct']:.1f}%</td>"
+            f"<td style='{_bar_style(r['Actual Weight Pct'], aw_vmax)}'>{r['Actual Weight Pct']:.1f}%</td>"
+            f"<td style='{_diverging_cell_style(r['Deviation Pp'], dev_vmax)}color:{dev_color};font-weight:600'>"
+            f"{arrow} {r['Deviation Pp']:+.2f}pp</td>"
+            f"<td style='{_diverging_cell_style(r['Nominal Net USD'], nom_vmax)}color:{nom_color};font-weight:600'>"
+            f"${r['Nominal Net USD']:,.0f}</td>"
+            f"<td style='color:{lots_color}'>{r['Index Net']:+,.0f}</td>"
+            f"<td style='{_bar_style(r['Net Pct OI'], oi_vmax, 'rgba(217,119,6,.20)')}'>{r['Net Pct OI']:+.1f}%</td>"
+            "</tr>"
+        )
+    header = ("<tr><th>Commodity</th><th>Group</th><th>Target %</th><th>Actual %</th>"
+              "<th>Deviation</th><th>Nominal Net USD</th><th>Net Lots</th><th>Net % of OI</th></tr>")
+    return f"{css}<div class='idxsnap-wrap'><table class='idxsnap'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
+
 df = load_data()
 all_commodities = sorted(df["Commodity"].unique(), key=lambda c: list(GROUP_OF.keys()).index(c) if c in GROUP_OF else 99)
 max_date = df["Date"].max()
@@ -212,8 +279,8 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
-tab_overview, tab_total, tab_dev, tab_comp, tab_detail = st.tabs(
-    ["Overview", "Total Ags Index", "Weight Deviation (Lots)", "Composition vs Target", "Per-Commodity Detail"]
+tab_overview, tab_snapshot, tab_total, tab_dev, tab_comp, tab_detail = st.tabs(
+    ["Overview", "Snapshot", "Total Ags Index", "Weight Deviation (Lots)", "Composition vs Target", "Per-Commodity Detail"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -270,6 +337,17 @@ with tab_overview:
                 "| Total OI | `3CFTC<CFTC_CODE>OI` | `COMM_LAST` |\n"
                 "| Price | `<ROOT>c2` (2nd-month) | `TRDPRC_1` |"
             )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SNAPSHOT — one master table, every commodity's index-leg vitals side by side
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_snapshot:
+    st.markdown(lbl(f"Index Snapshot — {max_date.strftime('%d %b %Y')}"), unsafe_allow_html=True)
+    snap = df[df["Date"] == max_date].copy()
+    snap_total = snap["Nominal Net USD"].sum(skipna=True)
+    snap["Actual Weight Pct"] = snap["Nominal Net USD"] / snap_total * 100
+    snap["Deviation Pp"] = snap["Actual Weight Pct"] - snap["Target Weight Pct"]
+    st.markdown(build_snapshot_table_html(snap, GROUP_OF, COLORS, list(GROUPS.keys())), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOTAL AGS INDEX — aggregate passive-money notional, all 13 commodities
