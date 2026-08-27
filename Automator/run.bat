@@ -17,7 +17,7 @@ python "%SCRIPT%" >> "%LOG%" 2>&1
 set ERR=!ERRORLEVEL!
 if !ERR! NEQ 0 (
     echo %DATE% %TIME% -- INGEST FAILED >> "%LOG%"
-    python "%MAILER%" FAIL "Index positioning ingest failed. Check run_log.txt."
+    python "%MAILER%" INGEST_FAIL "Index positioning ingest failed. Check run_log.txt."
     exit /b 1
 )
 echo %DATE% %TIME% -- Ingest complete >> "%LOG%"
@@ -32,14 +32,14 @@ if !ERRORLEVEL! NEQ 0 (
     set PUSH_ERR=!ERRORLEVEL!
     if !PUSH_ERR! NEQ 0 (
         echo %DATE% %TIME% -- GIT PUSH FAILED >> "%LOG%"
-        python "%MAILER%" FAIL "Sync OK but git push failed. Check run_log.txt."
+        python "%MAILER%" PUSH_FAIL "Sync OK but git push failed. Check run_log.txt."
         exit /b 1
     )
     echo %DATE% %TIME% -- Git push OK >> "%LOG%"
-    python "%MAILER%" SUCCESS "Index positioning synced and pushed to GitHub."
+    python "%MAILER%" SUCCESS_PUSHED "Index positioning synced and pushed to GitHub."
 ) else (
     echo %DATE% %TIME% -- No changes, skipping commit >> "%LOG%"
-    python "%MAILER%" SUCCESS "Index sync ran — no changes detected."
+    python "%MAILER%" SUCCESS_NOCHANGE "Index sync ran — no changes detected."
 )
 
 echo %DATE% %TIME% -- DONE >> "%LOG%"
