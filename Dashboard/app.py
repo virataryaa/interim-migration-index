@@ -79,15 +79,20 @@ def load_daily_prices() -> pd.DataFrame:
 def compute_daily_vol(daily_df: pd.DataFrame) -> pd.DataFrame:
     """Rolling 20/60/120-day realized volatility of daily returns, per
     commodity — same methodology as COT_ALL's Spec VaR (_build_var_df in
-    cot_app.py), but sourced from our own daily LSEG pull so all 13
-    commodities are covered (Rollex's daily data only covers the 7 ICE
-    softs). Computed on each commodity's OWN native trading-day sequence
-    (not pivoted to a shared calendar) — pivoting+ffill would insert an
-    artificial 0%-return day into a commodity's series on any date another
-    commodity traded but it didn't, understating its true volatility.
-    Cocoa's CCc1 series (the sparsest — ~18% of days missing vs. the union
-    calendar) showed up to an 8% vol understatement from this in past
-    gap-heavy periods when checked against this native-calendar version."""
+    cot_app.py). Deliberately NOT sourced from the same price_ric series as
+    the $ Price column: ingest_lseg.py feeds this from Rollex (the 4 ICE
+    softs — the actively-maintained Interim_Migration/Rollex build) or the
+    S&P GSCI single-commodity sub-index (the other 9) instead — a fixed-
+    maturity continuation like price_ric back-tested (2026-08-28) as
+    understating realized vol by ~12% on average vs. either of those roll-
+    managed series, since it's structurally calmer than what an index
+    fund's actual rolled exposure realizes. Using a different series than
+    Price for this is fine since vol only needs %-returns (unit-agnostic)
+    — no $-level mismatch. Computed on each commodity's OWN native trading-
+    day sequence (not pivoted to a shared calendar) — pivoting+ffill would
+    insert an artificial 0%-return day into a commodity's series on any
+    date another commodity traded but it didn't, understating its true
+    volatility."""
     frames = []
     for c, g in daily_df.groupby("Commodity"):
         g = g.sort_values("Date")

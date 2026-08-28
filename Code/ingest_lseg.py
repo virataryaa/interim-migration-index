@@ -94,6 +94,45 @@ COMMODITIES = {
 FETCH_RETRIES = 3
 FETCH_BACKOFF = 5
 
+# ── Volatility-only price source overrides ──────────────────────────────────
+# The weekly "Price" column above (price_ric, e.g. KCc2) stays UNCHANGED —
+# it drives $ notional (Nominal Net USD = lots x Price x Multiplier) and must
+# stay a real, correctly-denominated futures price. But price_ric is a fixed
+# "always N-months-out" continuation, which back-tested (2026-08-28) as
+# understating realized vol vs. a roll-managed series by ~12% on average for
+# Coffee (0.0206 vs 0.0231 daily-return std, 2020-2026) — presumably because
+# a fixed far-dated continuation is systematically calmer than what an
+# index fund's actual roll-managed exposure realizes. Since vol only needs
+# %-returns (unit-agnostic), it's safe to source it from a DIFFERENT series
+# than the $ Price column without creating a Price/Vol mismatch:
+#   - The 4 ICE-softs also covered by our OWN Rollex builder (roll-adjusted,
+#     already verified near-identical vol to GSCI's own sub-index in the
+#     same backtest) — read locally from the Interim_Migration/Rollex
+#     project, whose own LSEG automator keeps it current daily (verified
+#     2026-08-28: through the SAME day as this ingest ran). NOTE: there is
+#     also a legacy, no-longer-updated Rollex build under ICEBREAKER/Rollex
+#     (~1 month stale as of this check) — do NOT point at that one.
+#   - The other 9 (no Rollex equivalent) — the S&P GSCI single-commodity
+#     sub-index RIC instead (verified live 2026-08-28, all 9 accessible).
+ROLLEX_DIR = Path(r"C:\Users\virat.arya\ETG\SoftsDatabase - Documents\Database\Hardmine\Interim_Migration\Rollex\Database")
+ROLLEX_VOL_SOURCE = {
+    "COTTON": "rollex_CT.parquet",
+    "COCOA":  "rollex_CC.parquet",
+    "SUGAR":  "rollex_SB.parquet",
+    "COFFEE": "rollex_KC.parquet",
+}
+GSCI_VOL_SOURCE = {
+    "SRW":      ".SPGSWHP",
+    "HRW":      ".SPGSKWP",
+    "CORN":     ".SPGSCNP",
+    "SOYBEAN":  ".SPGSSOP",
+    "BEAN OIL": ".SPGSBOP",
+    "MEAL":     ".SPGSSMP",
+    "HOG":      ".SPGSLHP",
+    "LIVE":     ".SPGSLCP",
+    "FEEDER":   ".SPGSFCP",
+}
+
 
 def _history(ld, ric: str, field: str, start: str, end: str, label: str) -> pd.Series | None:
     for attempt in range(FETCH_RETRIES):
@@ -116,6 +155,26 @@ def _history(ld, ric: str, field: str, start: str, end: str, label: str) -> pd.S
                 continue
             log.warning("  MISSING: %s (%s) — %s", ric, label, str(e)[:150])
             return None
+    return None
+
+
+def fetch_vol_source_daily(ld, name: str, start: str, end: str) -> pd.Series | None:
+    """Daily series used ONLY to compute realized volatility (see the
+    ROLLEX_VOL_SOURCE / GSCI_VOL_SOURCE comment above) — deliberately not
+    the same series as the weekly $ Price column."""
+    if name in ROLLEX_VOL_SOURCE:
+        p = ROLLEX_DIR / ROLLEX_VOL_SOURCE[name]
+        if not p.exists():
+            log.warning("  %s: Rollex file not found (%s) — vol source skipped this run", name, p)
+            return None
+        rx = pd.read_parquet(p, columns=["rollex_px"])
+        rx.index = pd.to_datetime(rx.index)
+        s = rx.loc[(rx.index >= pd.Timestamp(start)) & (rx.index <= pd.Timestamp(end)), "rollex_px"]
+        s.index.name = "Date"
+        return s if not s.empty else None
+    if name in GSCI_VOL_SOURCE:
+        return _history(ld, GSCI_VOL_SOURCE[name], "TRDPRC_1", start, end, f"{name} GSCI vol source")
+    log.warning("  %s: no vol-source mapping — should not happen (13 commodities all mapped)", name)
     return None
 
 
@@ -187,10 +246,12 @@ def main(full: bool):
     daily_frames = []
     for name, cfg in COMMODITIES.items():
         log.info("Fetching %s (CFTC %s)...", name, cfg["cftc_code"])
-        weekly_df, daily_px = fetch_commodity(ld, name, cfg, start, end)
+        weekly_df, _ = fetch_commodity(ld, name, cfg, start, end)
         frames.append(weekly_df)
-        if daily_px is not None and not daily_px.empty:
-            d = daily_px.rename("Price").reset_index()
+        vol_px = fetch_vol_source_daily(ld, name, start, end)
+        time.sleep(1)
+        if vol_px is not None and not vol_px.empty:
+            d = vol_px.rename("Price").reset_index()
             d.insert(0, "Commodity", name)
             daily_frames.append(d)
 
@@ -214,10 +275,12 @@ def main(full: bool):
     log.info("Saved -> %s | %d rows | %d commodities", OUT_FILE.name, len(combined),
              combined["Commodity"].nunique())
 
-    # ── Daily price history — used to compute realized volatility for the
-    #    "Index in VaR" tab (same Price*Multiplier*Vol*Z methodology as
-    #    COT_ALL's Spec VaR, but sourced from our own LSEG pull so all 13
-    #    commodities are covered, not just the 7 Rollex/ICE ones). ─────────
+    # ── Daily price history — used ONLY to compute realized volatility for
+    #    the "Index in VaR" tab (same Price*Multiplier*Vol*Z methodology as
+    #    COT_ALL's Spec VaR). Per-commodity vol source is Rollex (4 ICE
+    #    softs) or GSCI sub-index (other 9) — see ROLLEX_VOL_SOURCE /
+    #    GSCI_VOL_SOURCE above; NOT the same series as the weekly $ Price
+    #    column, which stays on price_ric. ─────────────────────────────────
     if daily_frames:
         new_daily = pd.concat(daily_frames, ignore_index=True)
         if DAILY_PRICE_FILE.exists() and not full:

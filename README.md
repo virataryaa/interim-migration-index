@@ -73,16 +73,25 @@ tab and the Snapshot tab's extra columns.
 
 - **`Code/ingest_lseg.py`** — pulls all 13 commodities' Long/Short/OI/Price
   history from LSEG, computes `Index Net`, `Nominal Net USD`
-  (= Index Net × Price × Multiplier), and `Net Pct OI`. Also persists the
-  full daily price series (fetched anyway at `interval="daily"`, previously
-  discarded down to the weekly CFTC dates) to `daily_prices.parquet`, used
-  for the Index in VaR tab's realized-volatility calc. `--full` for a full
-  2016-01-01 backfill, no flag for a 30-day incremental refresh.
+  (= Index Net × Price × Multiplier), and `Net Pct OI`. Also persists a
+  daily price series to `daily_prices.parquet` for the Index in VaR tab's
+  realized-volatility calc — deliberately NOT the same price_ric series as
+  the weekly $ Price column above (see `ROLLEX_VOL_SOURCE` /
+  `GSCI_VOL_SOURCE` in the file): a fixed-maturity continuation like
+  price_ric back-tested (2026-08-28) as understating realized vol ~12% on
+  average vs. a roll-managed series, so vol is sourced instead from Rollex
+  (the 4 ICE softs — the actively-maintained `Interim_Migration/Rollex`
+  build, NOT the stale legacy one under `ICEBREAKER/Rollex`) or the S&P
+  GSCI single-commodity sub-index (the other 9, e.g. `.SPGSKCP` for
+  Coffee). Using a different series than Price for vol is fine since vol
+  only needs %-returns (unit-agnostic). `--full` for a full 2016-01-01
+  backfill, no flag for a 30-day incremental refresh.
 - **`Database/index_positioning.parquet`** — one row per commodity per
   (weekly-cadence) date.
 - **`Database/daily_prices.parquet`** — one row per commodity per trading
   day (Commodity, Date, Price) — daily granularity, used only for realized
   volatility (the main dataset stays weekly, matching the CFTC report).
+  Price here is the Rollex/GSCI vol-source series above, not price_ric.
 - **`Dashboard/app.py`** — four tabs (consolidated from an earlier six-tab
   layout that spread the same information across overlapping views):
   - **Snapshot** — Target vs Actual weight bar chart (By Commodity or By
@@ -98,8 +107,13 @@ tab and the Snapshot tab's extra columns.
     came from lots changing vs price moving.
   - **What It Should Be** — actual vs the GSCI/BCOM target: the
     Over/Under-vs-target lots chart (Softs/Grains/Oilseeds/Livestock/Custom
-    selector), a scrollable weekly %-of-weight deviation table across all
-    13 commodities, and a target-weight/RIC reference expander.
+    selector), the same deviation converted to 1-day 99% VaR $ (`Deviation
+    Lots × Price × Multiplier × Vol × Z` — same VaR-per-lot the Index in
+    VaR tab uses, applied to the target-weight gap instead of Net lots, so
+    the over/under is comparable across commodities on a $-risk basis, not
+    just raw lots) with its own master table, a scrollable weekly %-of-
+    weight deviation table across all 13 commodities, and a target-weight/
+    RIC reference expander.
   - **Index in VaR** — Index Traders' Net/Long/Short lots converted to a
     1-day 99% dollar VaR (`Price × Multiplier × realized Vol(20/60/120D) ×
     2.3263`) — the exact formula COT_ALL's `cot_app.py` ("Specs in VaR" tab)
@@ -107,9 +121,9 @@ tab and the Snapshot tab's extra columns.
     Spec risk on the same $-risk scale, not just by raw lots or notional $
     (which ignore how volatile each market is). A cross-commodity bar chart
     (By Commodity or By Group), a master table, and a Net-VaR-over-time
-    chart. Volatility is computed from our own daily LSEG price pull
-    (`Database/daily_prices.parquet`) rather than Rollex, since Rollex's
-    daily data only covers the 7 ICE softs and this project tracks all 13.
+    chart. Volatility source: see `Database/daily_prices.parquet` above
+    (Rollex for the 4 ICE softs, GSCI sub-index for the other 9 — not
+    price_ric).
   - **Per-Commodity Detail** — Long/Short/Net, % of OI, nominal $ for one
     selected commodity.
 
