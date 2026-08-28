@@ -609,9 +609,6 @@ with tab_should:
     st.plotly_chart(fig_dev, use_container_width=True)
 
     st.markdown(lbl("Over / Under vs Target Weight (in VaR $)"), unsafe_allow_html=True)
-    st.caption("Same lots deviation above, converted to 1-day 99% VaR $ (Price × Multiplier × Vol × Z) — "
-              "puts every commodity's over/under on the same $-risk scale, since the same lot count "
-              "means very different risk in a volatile market vs a quiet one.")
     devvar_window = st.radio("Vol Window", [20, 60, 120], horizontal=True,
                              format_func=lambda x: f"{x}D", key="devvar_window")
     daily_px_dev = load_daily_prices()
