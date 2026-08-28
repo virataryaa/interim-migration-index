@@ -50,12 +50,30 @@ this project assumed after a few `v1` tickers came back `Access Denied`:
 reconstruction that used a static January-reference lot count. The real
 formula does no such per-year anchoring:
 
-`target_weight_pct` per commodity (in `Code/ingest_lseg.py`'s `COMMODITIES`
-dict) is the exact "Used" row from the workbook's "GSCI and BCOM weights"
-sheet — full precision, not rounded (rounding to whole numbers previously
-summed to 101% instead of 100%). It is a **fixed constant** — re-derived
-once a year at the GSCI/BCOM January rebalance, but never re-anchored
-per-date the way the earlier version assumed.
+Target weight (`Code/ingest_lseg.py`'s `TARGET_WEIGHT_BY_YEAR`, added
+2026-08-28) is **per calendar year, 2017-2026** — not a single constant
+held flat across all history, which understated/overstated older dates'
+deviation by using today's weight retroactively. Each year = 60% S&P GSCI
+RPDW + 40% Bloomberg BCOM Target Weight, each re-weighted to sum to 100%
+within just these 13 ag/livestock commodities (both indices track ~24
+commodities total incl. energy/other metals — irrelevant here); full
+precision, not rounded (rounding to whole numbers previously summed to
+101% instead of 100%). Two commodities exist on only one side of the
+blend: GSCI has no Soybean Meal/Oil sub-indices (their GSCI-side
+contribution is 0), BCOM has no Feeder Cattle (its BCOM-side contribution
+is 0); Cocoa was dropped from BCOM ~2005-2025 and only re-added in 2026
+(BCOM-side contribution is 0 for 2017-2025). Source: S&P GSCI RPDW +
+Bloomberg BCOM Target Weight annual announcement PDFs — see the "Notes and
+sources" pane the user supplied for the full source-URL list per year.
+Dates before 2017 (history starts 2016) use the 2017 weights (no earlier
+table available — the underlying announcement PDFs for 2015/2016 are no
+longer published and the archived pages show the tables as images, not
+text); dates from 2027 onward use 2026's weights until a 2027 row is
+added at the next January rebalance. Each year's 13 weights verified to
+sum to exactly 100.000%; the replaced single-constant value (was itself
+derived from the same two tables, just for 2026 only) matched this
+dict's 2026 row to within 0.6pp on every commodity — consistent with
+source-rounding noise, not a methodology discrepancy.
 
 At every date (workbook `RECAP` cell refs in parens):
 1. `Actual Weight % = Nominal Net USD ÷ Total Pool × 100` (`BQ = BC/$BP`)

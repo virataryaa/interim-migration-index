@@ -148,9 +148,10 @@ def compute_deviation_var(dev_df: pd.DataFrame, var_df: pd.DataFrame) -> pd.Data
 @st.cache_data(ttl=1800)
 def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
                        all_commodities: list) -> pd.DataFrame:
-    """Verified against the source workbook's RECAP sheet — the target weight
-    is a fixed constant (re-derived once a year at the GSCI/BCOM rebalance,
-    not re-anchored per date), and at every single date:
+    """Verified against the source workbook's RECAP sheet — target weight is
+    a per-CALENDAR-YEAR value (re-derived at each January GSCI/BCOM
+    rebalance — see ingest_lseg.py's TARGET_WEIGHT_BY_YEAR — NOT a single
+    constant held flat across all years), and at every single date:
       Deviation %   = Actual Weight % - Target Weight %          (RECAP: CL = BQ-BQ$2)
       Deviation USD = Deviation % / 100 * Total Pool              (RECAP: CY = CL*BP)
       Deviation Lots= Deviation USD / (Price * Multiplier)        (RECAP: DL = CL*BP/O)
@@ -161,12 +162,12 @@ def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Serie
     cols = [c for c in all_commodities if c in pool.columns]
     price = df.pivot_table(index="Date", columns="Commodity", values="Price", aggfunc="last")[cols]
     oi = df.pivot_table(index="Date", columns="Commodity", values="Total OI", aggfunc="last")[cols]
+    target_pivot = df.pivot_table(index="Date", columns="Commodity", values="Target Weight Pct", aggfunc="last")[cols]
     ref = df.drop_duplicates("Commodity").set_index("Commodity")
-    target_pct = ref["Target Weight Pct"].reindex(cols)
     multiplier = ref["Multiplier"].reindex(cols)
 
     actual_pct = pool[cols].div(total_pool, axis=0) * 100
-    dev_pct = actual_pct.sub(target_pct, axis=1)
+    dev_pct = actual_pct.sub(target_pivot)
     dev_usd = dev_pct.div(100).mul(total_pool, axis=0)
     dev_lots = dev_usd / price.mul(multiplier, axis=1)
     dev_pct_oi = dev_lots.div(oi) * 100
@@ -185,13 +186,14 @@ def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Serie
 @st.cache_data(ttl=1800)
 def compute_weekly_deviation_pct(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
                                   all_commodities: list) -> pd.DataFrame:
-    """Actual $-share of the pool minus each commodity's (constant) GSCI/BCOM
-    target weight, at every date — the simple %-of-weight deviation (distinct
-    from the static Jan-reference *lots* deviation in compute_deviation())."""
-    target_pct = df.drop_duplicates("Commodity").set_index("Commodity")["Target Weight Pct"]
+    """Actual $-share of the pool minus each commodity's per-calendar-year
+    GSCI/BCOM target weight, at every date — the simple %-of-weight
+    deviation (distinct from the static Jan-reference *lots* deviation in
+    compute_deviation())."""
     actual_pct = pool.div(total_pool, axis=0) * 100
     cols = [c for c in all_commodities if c in actual_pct.columns]
-    dev = actual_pct[cols].sub(target_pct.reindex(cols), axis=1)
+    target_pivot = df.pivot_table(index="Date", columns="Commodity", values="Target Weight Pct", aggfunc="last")[cols]
+    dev = actual_pct[cols].sub(target_pivot)
     return dev
 
 @st.cache_data(ttl=1800)
@@ -646,10 +648,15 @@ with tab_should:
     with st.expander("Target weights & CFTC RIC reference"):
         rc1, rc2 = st.columns(2)
         with rc1:
-            st.markdown("**GSCI/BCOM target weight (ag-only, re-weighted)**")
-            wt_ref = df.drop_duplicates("Commodity")[["Commodity", "Target Weight Pct"]].copy()
-            wt_ref["Target Weight Pct"] = wt_ref["Target Weight Pct"].map(lambda v: f"{v:.1f}%")
-            st.dataframe(wt_ref, use_container_width=True, hide_index=True)
+            st.markdown("**GSCI/BCOM target weight (ag-only, re-weighted) — by year**")
+            st.caption("60% S&P GSCI RPDW + 40% Bloomberg BCOM Target Weight, each re-weighted "
+                      "to sum to 100% within just these 13 commodities. Re-derived at each "
+                      "January rebalance — not a single constant across years.")
+            yr_ref = df.assign(Year=df["Date"].dt.year)
+            wt_by_year = yr_ref.pivot_table(index="Year", columns="Commodity",
+                                            values="Target Weight Pct", aggfunc="last")
+            wt_by_year = wt_by_year[[c for c in all_commodities if c in wt_by_year.columns]]
+            st.dataframe(wt_by_year.style.format("{:.2f}%"), use_container_width=True)
         with rc2:
             st.markdown("**CFTC CIT RIC scheme**")
             st.markdown(
