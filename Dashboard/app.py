@@ -128,6 +128,19 @@ def compute_index_var(df: pd.DataFrame, vol_df: pd.DataFrame, all_commodities: l
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 @st.cache_data(ttl=1800)
+def compute_deviation_var(dev_df: pd.DataFrame, var_df: pd.DataFrame) -> pd.DataFrame:
+    """The over/under-vs-target deviation, in VaR $ terms — same VaR Per Lot
+    (Price x Multiplier x Vol x Z) the Index-in-VaR tab uses for actual Net
+    lots, applied instead to Deviation Lots (the target-weight gap). Puts
+    the raw lot deviation on the same $-risk scale across commodities of
+    very different volatility, instead of comparing lots 1-for-1."""
+    m = dev_df.merge(var_df[["Commodity", "Date", "Price", "VaR Per Lot"] +
+                            [c for c in var_df.columns if c.startswith("vol_")]],
+                     on=["Commodity", "Date"], how="inner")
+    m["Deviation VaR USD"] = m["Deviation Lots"] * m["VaR Per Lot"]
+    return m
+
+@st.cache_data(ttl=1800)
 def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
                        all_commodities: list) -> pd.DataFrame:
     """Verified against the source workbook's RECAP sheet — the target weight
@@ -429,6 +442,50 @@ def build_var_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict, group_
               "<th>VaR / Lot</th><th>Net VaR ($M)</th><th>Long VaR ($M)</th><th>Short VaR ($M)</th></tr>")
     return f"{css}<div class='idxvar-wrap'><table class='idxvar'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
 
+def build_deviation_var_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict, group_order: list, vol_window: int) -> str:
+    tbl = tbl.copy()
+    tbl["_grp_rank"] = tbl["Commodity"].map(lambda c: group_order.index(group_of.get(c, "")) if group_of.get(c, "") in group_order else 99)
+    tbl = tbl.sort_values(["_grp_rank", "Deviation VaR USD"], ascending=[True, False])
+
+    css = """<style>
+      .idxdevvar-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px}
+      table.idxdevvar{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxdevvar th,table.idxdevvar td{padding:8px 14px;text-align:right;white-space:nowrap}
+      table.idxdevvar th:first-child,table.idxdevvar td:first-child,
+      table.idxdevvar th:nth-child(2),table.idxdevvar td:nth-child(2){text-align:left}
+      table.idxdevvar thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.68rem;text-transform:uppercase}
+      table.idxdevvar tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      .idxdevvar-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+      .idxdevvar-name{font-weight:600;color:#1d1d1f}
+      .idxdevvar-badge{padding:2px 9px;border-radius:9px;font-size:.68rem;font-weight:600}
+    </style>"""
+    vcol = f"vol_{vol_window}"
+    devvar_vmax = max(tbl["Deviation VaR USD"].abs().max(), 1)
+    rows = []
+    for _, r in tbl.iterrows():
+        grp = group_of.get(r["Commodity"], "")
+        bg, fg = GROUP_BADGE.get(grp, ("#eee", "#555"))
+        dot = colors.get(r["Commodity"], "#999")
+        dev_color = "#16a34a" if r["Deviation Lots"] >= 0 else "#dc2626"
+        devvar_color = "#16a34a" if r["Deviation VaR USD"] >= 0 else "#dc2626"
+        rows.append(
+            "<tr>"
+            f"<td><span class='idxdevvar-dot' style='background:{dot}'></span>"
+            f"<span class='idxdevvar-name'>{r['Commodity']}</span></td>"
+            f"<td><span class='idxdevvar-badge' style='background:{bg};color:{fg}'>{grp}</span></td>"
+            f"<td>${r['Price']:,.2f}</td>"
+            f"<td>{r[vcol]*100:.2f}%</td>"
+            f"<td style='color:{dev_color}'>{r['Deviation Lots']:+,.0f}</td>"
+            f"<td style='{_diverging_cell_style(r['Deviation VaR USD']/1e6, devvar_vmax/1e6)}color:{devvar_color};font-weight:600'>"
+            f"${r['Deviation VaR USD']/1e6:+,.1f}M</td>"
+            "</tr>"
+        )
+    header = (f"<tr><th>Commodity</th><th>Group</th><th>Price</th><th>{vol_window}D Vol</th>"
+              "<th>Deviation (lots)</th><th>Deviation VaR ($M)</th></tr>")
+    return f"{css}<div class='idxdevvar-wrap'><table class='idxdevvar'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
+
 df = load_data()
 all_commodities = sorted(df["Commodity"].unique(), key=lambda c: list(GROUP_OF.keys()).index(c) if c in GROUP_OF else 99)
 max_date = df["Date"].max()
@@ -550,6 +607,32 @@ with tab_should:
                                          hovertemplate=f"%{{x|%d %b %Y}}<br>{comm}: %{{y:,.0f}} lots<extra></extra>"))
     fig_dev.add_hline(y=0, line_color="#cccccc", line_width=1)
     st.plotly_chart(fig_dev, use_container_width=True)
+
+    st.markdown(lbl("Over / Under vs Target Weight (in VaR $)"), unsafe_allow_html=True)
+    st.caption("Same lots deviation above, converted to 1-day 99% VaR $ (Price × Multiplier × Vol × Z) — "
+              "puts every commodity's over/under on the same $-risk scale, since the same lot count "
+              "means very different risk in a volatile market vs a quiet one.")
+    devvar_window = st.radio("Vol Window", [20, 60, 120], horizontal=True,
+                             format_func=lambda x: f"{x}D", key="devvar_window")
+    daily_px_dev = load_daily_prices()
+    vol_df_dev = compute_daily_vol(daily_px_dev)
+    var_df_dev = compute_index_var(df, vol_df_dev, all_commodities, devvar_window)
+    dev_var_df = compute_deviation_var(dev_df, var_df_dev)
+
+    fig_dev_var = base_fig(height=420, yaxis_title="Deviation from Target Weight (VaR USD)")
+    for comm in sel_commodities:
+        s = dev_var_df[dev_var_df["Commodity"] == comm].set_index("Date")["Deviation VaR USD"]
+        if not s.empty:
+            fig_dev_var.add_trace(go.Scatter(x=s.index, y=s.values, name=comm,
+                                             line=dict(color=COLORS.get(comm), width=1.6),
+                                             hovertemplate=f"%{{x|%d %b %Y}}<br>{comm}: $%{{y:,.0f}}<extra></extra>"))
+    fig_dev_var.add_hline(y=0, line_color="#cccccc", line_width=1)
+    st.plotly_chart(fig_dev_var, use_container_width=True)
+
+    dev_var_latest = dev_var_df[dev_var_df["Date"] == dev_var_df.groupby("Commodity")["Date"].transform("max")]
+    if not dev_var_latest.empty:
+        st.markdown(build_deviation_var_table_html(dev_var_latest, GROUP_OF, COLORS, list(GROUPS.keys()), devvar_window),
+                   unsafe_allow_html=True)
 
     st.markdown(lbl("Weekly Deviation vs Target Weight (percentage points)"), unsafe_allow_html=True)
     weekly_dev = compute_weekly_deviation_pct(df, pool, total_pool, all_commodities)
