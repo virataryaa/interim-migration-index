@@ -583,6 +583,63 @@ def build_target_weights_table_html(wt_by_year: pd.DataFrame, group_of: dict, co
     return (f"{css}<div class='idxtw-wrap'><table class='idxtw'><thead><tr>"
             f"{''.join(header_cells)}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>")
 
+def build_rebalance_table_html(tbl: pd.DataFrame, group_of: dict, colors: dict, group_order: list,
+                               year_from: int, year_to: int) -> str:
+    tbl = tbl.copy()
+    tbl["_grp_rank"] = tbl["Commodity"].map(lambda c: group_order.index(group_of.get(c, "")) if group_of.get(c, "") in group_order else 99)
+    tbl = tbl.sort_values(["_grp_rank", "Commodity"])
+
+    css = """<style>
+      .idxrb-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px}
+      table.idxrb{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxrb th,table.idxrb td{padding:8px 14px;text-align:right;white-space:nowrap}
+      table.idxrb th:first-child,table.idxrb td:first-child,
+      table.idxrb th:nth-child(2),table.idxrb td:nth-child(2){text-align:left}
+      table.idxrb thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.68rem;text-transform:uppercase}
+      table.idxrb tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      .idxrb-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+      .idxrb-name{font-weight:600;color:#1d1d1f}
+      .idxrb-badge{padding:2px 9px;border-radius:9px;font-size:.68rem;font-weight:600}
+    </style>"""
+    vs_from_vmax = max(tbl[f"Buy/Sell $ vs {year_from}"].abs().max(), 1)
+    vs_act_vmax = max(tbl["Buy/Sell $ vs Latest Actual"].abs().max(), 1)
+    rows = []
+    for _, r in tbl.iterrows():
+        grp = group_of.get(r["Commodity"], "")
+        bg, fg = GROUP_BADGE.get(grp, ("#eee", "#555"))
+        dot = colors.get(r["Commodity"], "#999")
+        target_from = r[f"{year_from} Target %"]
+        target_to = r[f"{year_to} Target %"]
+        actual = r["Latest Actual %"]
+        flow_from = r[f"Buy/Sell $ vs {year_from}"]
+        flow_act = r["Buy/Sell $ vs Latest Actual"]
+        lots_from = r[f"Buy/Sell Lots vs {year_from}"]
+        lots_act = r["Buy/Sell Lots vs Latest Actual"]
+        c1 = "#16a34a" if flow_from >= 0 else "#dc2626"
+        c2 = "#16a34a" if flow_act >= 0 else "#dc2626"
+        style1 = _diverging_cell_style(flow_from, vs_from_vmax)
+        style2 = _diverging_cell_style(flow_act, vs_act_vmax)
+        rows.append(
+            "<tr>"
+            f"<td><span class='idxrb-dot' style='background:{dot}'></span>"
+            f"<span class='idxrb-name'>{r['Commodity']}</span></td>"
+            f"<td><span class='idxrb-badge' style='background:{bg};color:{fg}'>{grp}</span></td>"
+            f"<td>{target_from:.2f}%</td>"
+            f"<td>{actual:.2f}%</td>"
+            f"<td>{target_to:.2f}%</td>"
+            f"<td style='{style1}color:{c1};font-weight:600'>${flow_from/1e6:+,.1f}M</td>"
+            f"<td style='color:{c1}'>{lots_from:+,.0f}</td>"
+            f"<td style='{style2}color:{c2};font-weight:600'>${flow_act/1e6:+,.1f}M</td>"
+            f"<td style='color:{c2}'>{lots_act:+,.0f}</td>"
+            "</tr>"
+        )
+    header = (f"<tr><th>Commodity</th><th>Group</th><th>{year_from} Target %</th><th>Latest Actual %</th>"
+              f"<th>{year_to} Target %</th><th>Buy/Sell $M vs {year_from}</th><th>Buy/Sell Lots vs {year_from}</th>"
+              f"<th>Buy/Sell $M vs Actual</th><th>Buy/Sell Lots vs Actual</th></tr>")
+    return f"{css}<div class='idxrb-wrap'><table class='idxrb'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
+
 df = load_data()
 all_commodities = sorted(df["Commodity"].unique(), key=lambda c: list(GROUP_OF.keys()).index(c) if c in GROUP_OF else 99)
 max_date = df["Date"].max()
@@ -610,9 +667,9 @@ with st.sidebar:
     st.caption(f"BCOM weight: {100 - gsci_pct}%")
 blend_ratio = gsci_pct / 100
 
-tab_snapshot, tab_is, tab_should, tab_var, tab_detail, tab_weights = st.tabs(
+tab_snapshot, tab_is, tab_should, tab_var, tab_detail, tab_rebalance, tab_weights = st.tabs(
     ["Snapshot", "Positioning Over Time", "Deviation vs Target", "Risk (VaR)",
-     "Commodity COT Detail", "Target Weights (Reference)"]
+     "Commodity COT Detail", "Annual Rebalance", "Target Weights (Reference)"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -656,6 +713,70 @@ with tab_snapshot:
 
     st.markdown(lbl("Master Table — every commodity side by side"), unsafe_allow_html=True)
     st.markdown(build_snapshot_table_html(snap, GROUP_OF, COLORS, list(GROUPS.keys())), unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ANNUAL REBALANCE — simulate the January rebalance flow with a fictitious
+# next-year target weight (Romain's ask, 2026-08-31). Each index's own
+# weight-setting rule (GSCI: world-production-weighted; BCOM: liquidity +
+# production with caps) is proprietary and hard to replicate exactly — so
+# rather than try to forecast it, this tab is built to be READY the moment
+# the real next-year weights are announced (usually each November): type
+# them into the editable column and both comparisons recompute instantly,
+# no code change needed for a full year. Until announced, edit freely to
+# try scenarios.
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_rebalance:
+    year_from, year_to = max_date.year, max_date.year + 1
+    st.markdown(lbl(f"Annual Rebalance Simulator — {year_from} → {year_to}"), unsafe_allow_html=True)
+
+    rb_base = snap[["Commodity", "Target Weight Pct", "Actual Weight Pct", "Price", "Multiplier"]].copy()
+    rb_base["Group"] = rb_base["Commodity"].map(GROUP_OF)
+    rb_base = rb_base.rename(columns={"Target Weight Pct": f"{year_from} Target %",
+                                      "Actual Weight Pct": "Latest Actual %"})
+    rb_base[f"{year_to} Target %"] = rb_base[f"{year_from} Target %"]  # starting point — edit freely
+    rb_base = rb_base.sort_values("Commodity").reset_index(drop=True)
+
+    edited = st.data_editor(
+        rb_base[["Commodity", "Group", f"{year_from} Target %", "Latest Actual %", f"{year_to} Target %"]],
+        column_config={
+            "Commodity": st.column_config.TextColumn(disabled=True),
+            "Group": st.column_config.TextColumn(disabled=True),
+            f"{year_from} Target %": st.column_config.NumberColumn(disabled=True, format="%.2f%%"),
+            "Latest Actual %": st.column_config.NumberColumn(disabled=True, format="%.2f%%"),
+            f"{year_to} Target %": st.column_config.NumberColumn(format="%.2f%%", min_value=0.0, max_value=100.0, step=0.1),
+        },
+        hide_index=True, use_container_width=True, key="rebalance_editor",
+    )
+
+    total_input = edited[f"{year_to} Target %"].sum()
+    sum_ok = abs(total_input - 100) < 0.5
+    st.caption(f"Sum of {year_to} Target %: {total_input:.2f}%  " +
+              ("(sums to ~100%, good)" if sum_ok else "— should sum to ~100%, adjust before trusting the flow below"))
+
+    flows = edited.merge(rb_base[["Commodity", "Price", "Multiplier"]], on="Commodity", how="left")
+    flows[f"Buy/Sell $ vs {year_from}"] = (flows[f"{year_to} Target %"] - flows[f"{year_from} Target %"]) / 100 * snap_total
+    flows["Buy/Sell $ vs Latest Actual"] = (flows[f"{year_to} Target %"] - flows["Latest Actual %"]) / 100 * snap_total
+    flows[f"Buy/Sell Lots vs {year_from}"] = flows[f"Buy/Sell $ vs {year_from}"] / (flows["Price"] * flows["Multiplier"])
+    flows["Buy/Sell Lots vs Latest Actual"] = flows["Buy/Sell $ vs Latest Actual"] / (flows["Price"] * flows["Multiplier"])
+
+    fig_rb = go.Figure()
+    rb_sorted = flows.sort_values(f"Buy/Sell $ vs {year_from}")
+    fig_rb.add_trace(go.Bar(y=rb_sorted["Commodity"], x=rb_sorted[f"Buy/Sell $ vs {year_from}"] / 1e6,
+                            name=f"vs {year_from} Target", orientation="h", marker_color=GREY, opacity=0.7,
+                            hovertemplate="%{y}<br>vs " + str(year_from) + ": $%{x:.1f}M<extra></extra>"))
+    fig_rb.add_trace(go.Bar(y=rb_sorted["Commodity"], x=rb_sorted["Buy/Sell $ vs Latest Actual"] / 1e6,
+                            name="vs Latest Actual", orientation="h", marker_color=NAVY, opacity=0.85,
+                            hovertemplate="%{y}<br>vs Actual: $%{x:.1f}M<extra></extra>"))
+    fig_rb.add_vline(x=0, line_color="#cccccc", line_width=1)
+    fig_rb.update_layout(height=420, barmode="group",
+                         xaxis=dict(title="Buy(+) / Sell(-), $M", gridcolor="#f0f0f0"),
+                         legend=dict(orientation="h", y=1.05, font=dict(size=9)),
+                         margin=dict(t=10, b=10, l=4, r=4), **_D)
+    st.plotly_chart(fig_rb, use_container_width=True)
+
+    st.markdown(lbl("Master Table — every commodity side by side"), unsafe_allow_html=True)
+    st.markdown(build_rebalance_table_html(flows, GROUP_OF, COLORS, list(GROUPS.keys()), year_from, year_to),
+               unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WHAT IT IS — actual positioning over time, no target comparison
