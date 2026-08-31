@@ -146,12 +146,26 @@ def compute_deviation_var(dev_df: pd.DataFrame, var_df: pd.DataFrame) -> pd.Data
     return m
 
 @st.cache_data(ttl=1800)
+def target_weight_pivot(df: pd.DataFrame, cols: list, blend_ratio: float) -> pd.DataFrame:
+    """Date x Commodity target weight, live-blended from the two RAW
+    (un-blended) per-index columns ingest_lseg.py writes — GSCI Weight Pct
+    and BCOM Weight Pct — at whatever ratio the sidebar slider is set to.
+    blend_ratio is GSCI's share (0-1); BCOM gets (1 - blend_ratio). Default
+    slider value is 0.60, matching the original workbook's 60/40 blend, but
+    this is no longer baked into the ingest — changing the slider re-blends
+    every date live, no re-ingest needed."""
+    gsci = df.pivot_table(index="Date", columns="Commodity", values="GSCI Weight Pct", aggfunc="last")[cols]
+    bcom = df.pivot_table(index="Date", columns="Commodity", values="BCOM Weight Pct", aggfunc="last")[cols]
+    return gsci * blend_ratio + bcom * (1 - blend_ratio)
+
+@st.cache_data(ttl=1800)
 def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
-                       all_commodities: list) -> pd.DataFrame:
+                       all_commodities: list, blend_ratio: float) -> pd.DataFrame:
     """Verified against the source workbook's RECAP sheet — target weight is
     a per-CALENDAR-YEAR value (re-derived at each January GSCI/BCOM
-    rebalance — see ingest_lseg.py's TARGET_WEIGHT_BY_YEAR — NOT a single
-    constant held flat across all years), and at every single date:
+    rebalance — see target_weight_pivot() / ingest_lseg.py's
+    GSCI_WEIGHT_BY_YEAR + BCOM_WEIGHT_BY_YEAR — NOT a single constant held
+    flat across all years), and at every single date:
       Deviation %   = Actual Weight % - Target Weight %          (RECAP: CL = BQ-BQ$2)
       Deviation USD = Deviation % / 100 * Total Pool              (RECAP: CY = CL*BP)
       Deviation Lots= Deviation USD / (Price * Multiplier)        (RECAP: DL = CL*BP/O)
@@ -162,7 +176,7 @@ def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Serie
     cols = [c for c in all_commodities if c in pool.columns]
     price = df.pivot_table(index="Date", columns="Commodity", values="Price", aggfunc="last")[cols]
     oi = df.pivot_table(index="Date", columns="Commodity", values="Total OI", aggfunc="last")[cols]
-    target_pivot = df.pivot_table(index="Date", columns="Commodity", values="Target Weight Pct", aggfunc="last")[cols]
+    target_pivot = target_weight_pivot(df, cols, blend_ratio)
     ref = df.drop_duplicates("Commodity").set_index("Commodity")
     multiplier = ref["Multiplier"].reindex(cols)
 
@@ -185,14 +199,14 @@ def compute_deviation(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Serie
 
 @st.cache_data(ttl=1800)
 def compute_weekly_deviation_pct(df: pd.DataFrame, pool: pd.DataFrame, total_pool: pd.Series,
-                                  all_commodities: list) -> pd.DataFrame:
+                                  all_commodities: list, blend_ratio: float) -> pd.DataFrame:
     """Actual $-share of the pool minus each commodity's per-calendar-year
     GSCI/BCOM target weight, at every date — the simple %-of-weight
     deviation (distinct from the static Jan-reference *lots* deviation in
     compute_deviation())."""
     actual_pct = pool.div(total_pool, axis=0) * 100
     cols = [c for c in all_commodities if c in actual_pct.columns]
-    target_pivot = df.pivot_table(index="Date", columns="Commodity", values="Target Weight Pct", aggfunc="last")[cols]
+    target_pivot = target_weight_pivot(df, cols, blend_ratio)
     dev = actual_pct[cols].sub(target_pivot)
     return dev
 
@@ -554,6 +568,16 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
+    st.markdown("---")
+    st.markdown("**Target weight blend**")
+    gsci_pct = st.slider("GSCI weight %", 0, 100, 60, step=5, key="blend_gsci_pct",
+                         help="Target Weight % = this × S&P GSCI RPDW + (100 − this) × Bloomberg "
+                              "BCOM Target Weight, both re-weighted to sum to 100% within these 13 "
+                              "commodities. Applied live across every tab (Vs Target, Target "
+                              "Weights, Snapshot) — default 60/40 matches the original workbook.")
+    st.caption(f"BCOM weight: {100 - gsci_pct}%")
+blend_ratio = gsci_pct / 100
+
 tab_is, tab_should, tab_weights, tab_snapshot, tab_var, tab_detail = st.tabs(
     ["Index Positioning", "Vs Target", "Target Weights", "Snapshot", "Index in VaR", "Detail"]
 )
@@ -567,6 +591,7 @@ with tab_snapshot:
     snap = df[df["Date"] == max_date].copy()
     snap_total = snap["Nominal Net USD"].sum(skipna=True)
     snap["Actual Weight Pct"] = snap["Nominal Net USD"] / snap_total * 100
+    snap["Target Weight Pct"] = snap["GSCI Weight Pct"] * blend_ratio + snap["BCOM Weight Pct"] * (1 - blend_ratio)
     snap["Deviation Pp"] = snap["Actual Weight Pct"] - snap["Target Weight Pct"]
 
     bar_level = st.radio("View", ["By Commodity", "By Group"], horizontal=True, key="snap_bar_level")
@@ -592,7 +617,7 @@ with tab_snapshot:
                            margin=dict(t=10, b=10, l=4, r=4), **_D)
     st.plotly_chart(fig_comp, use_container_width=True)
 
-    dev_latest = compute_deviation(df, pool, total_pool, all_commodities)
+    dev_latest = compute_deviation(df, pool, total_pool, all_commodities, blend_ratio)
     dev_latest = dev_latest[dev_latest["Date"] == max_date][["Commodity", "Deviation Lots", "Deviation Pct OI"]]
     snap = snap.merge(dev_latest, on="Commodity", how="left")
 
@@ -648,7 +673,7 @@ with tab_should:
     else:
         sel_commodities = [c for c in GROUPS[sel_group] if c in all_commodities]
 
-    dev_df = compute_deviation(df, pool, total_pool, all_commodities)
+    dev_df = compute_deviation(df, pool, total_pool, all_commodities, blend_ratio)
     fig_dev = base_fig(height=420, yaxis_title="Deviation from Target Weight (lots)")
     for comm in sel_commodities:
         s = dev_df[dev_df["Commodity"] == comm].set_index("Date")["Deviation Lots"]
@@ -688,7 +713,7 @@ with tab_should:
                    unsafe_allow_html=True)
 
     st.markdown(lbl("Weekly Deviation vs Target Weight (percentage points)"), unsafe_allow_html=True)
-    weekly_dev = compute_weekly_deviation_pct(df, pool, total_pool, all_commodities)
+    weekly_dev = compute_weekly_deviation_pct(df, pool, total_pool, all_commodities, blend_ratio)
     n_weeks = st.slider("Weeks shown", min_value=8, max_value=min(104, len(weekly_dev)),
                         value=min(52, len(weekly_dev)), step=4, key="trend_weeks")
     st.markdown(build_weekly_deviation_html(weekly_dev.tail(n_weeks), all_commodities, GROUP_OF),
@@ -709,19 +734,30 @@ with tab_should:
 # and auditable on their own, not buried in an expander.
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_weights:
-    st.markdown(lbl("GSCI/BCOM Target Weight — by Year"), unsafe_allow_html=True)
-    st.caption("60% S&P GSCI RPDW + 40% Bloomberg BCOM Target Weight, each re-weighted to sum "
-              "to 100% within just these 13 commodities. Re-derived at each January rebalance — "
-              "not a single constant held flat across years (see README for sources and the two "
-              "indices' coverage gaps: GSCI has no Soybean Meal/Oil, BCOM has no Feeder Cattle, "
-              "Cocoa was out of BCOM 2017-2025).")
+    st.markdown(lbl(f"GSCI/BCOM Target Weight — by Year  ·  {gsci_pct}% GSCI / {100 - gsci_pct}% BCOM"),
+               unsafe_allow_html=True)
+    st.caption(f"{gsci_pct}% S&P GSCI RPDW + {100 - gsci_pct}% Bloomberg BCOM Target Weight (adjust "
+              "the blend in the sidebar — it re-computes live everywhere in this app, no re-ingest "
+              "needed), each re-weighted to sum to 100% within just these 13 commodities. Re-derived "
+              "at each January rebalance — not a single constant held flat across years (see README "
+              "for sources and the two indices' coverage gaps: GSCI has no Soybean Meal/Oil, BCOM "
+              "has no Feeder Cattle, Cocoa was out of BCOM 2017-2025).")
     yr_ref = df.assign(Year=df["Date"].dt.year)
-    wt_by_year = yr_ref.pivot_table(index="Year", columns="Commodity",
-                                    values="Target Weight Pct", aggfunc="last")
-    wt_cols = sorted([c for c in all_commodities if c in wt_by_year.columns],
+    wt_cols = sorted([c for c in all_commodities if c in df["Commodity"].unique()],
                      key=lambda c: list(GROUPS.keys()).index(GROUP_OF.get(c, "")) if GROUP_OF.get(c, "") in GROUPS else 99)
-    wt_by_year = wt_by_year[wt_cols]
+    gsci_by_year = yr_ref.pivot_table(index="Year", columns="Commodity", values="GSCI Weight Pct", aggfunc="last")[wt_cols]
+    bcom_by_year = yr_ref.pivot_table(index="Year", columns="Commodity", values="BCOM Weight Pct", aggfunc="last")[wt_cols]
+    wt_by_year = gsci_by_year * blend_ratio + bcom_by_year * (1 - blend_ratio)
     st.markdown(build_target_weights_table_html(wt_by_year, GROUP_OF, COLORS), unsafe_allow_html=True)
+
+    with st.expander("Raw GSCI-only / BCOM-only weights (before blending)"):
+        rw1, rw2 = st.columns(2)
+        with rw1:
+            st.markdown("**S&P GSCI RPDW (re-weighted to these 13, un-blended)**")
+            st.markdown(build_target_weights_table_html(gsci_by_year, GROUP_OF, COLORS), unsafe_allow_html=True)
+        with rw2:
+            st.markdown("**Bloomberg BCOM Target Weight (re-weighted to these 13, un-blended)**")
+            st.markdown(build_target_weights_table_html(bcom_by_year, GROUP_OF, COLORS), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INDEX IN VAR — Index Traders' lots converted to a 1-day 99% dollar VaR

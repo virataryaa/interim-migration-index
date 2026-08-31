@@ -91,41 +91,62 @@ COMMODITIES = {
 # Each year = 60% S&P GSCI RPDW + 40% Bloomberg BCOM Target Weight, each
 # re-weighted to sum to 100% within just this 13-commodity ag/livestock
 # subset (GSCI and BCOM each cover ~24 commodities total incl. energy/other
-# metals — irrelevant here). Two commodities only exist on one side of the
-# blend: GSCI has no Soybean Meal/Oil sub-indices (BCOM-only, so their
-# GSCI-side contribution is 0); BCOM has no Feeder Cattle (GSCI-only).
-# Cocoa was dropped from BCOM entirely from ~2005 until it was re-added in
-# 2026 — so its BCOM-side contribution is 0 for 2017-2025, non-zero only in
-# 2026. Source tables: S&P GSCI RPDW + Bloomberg BCOM Target Weight annual
-# announcement PDFs, 2017-2026 (see Index README for the full source-URL
-# list). Verified: each year's blended 13 sum to exactly 100.000%; the 2026
-# row here matches the single constant this dict replaced (was hand-derived
-# from the same two tables) to within 0.6pp on every commodity — consistent
-# with expected source-rounding noise, not a methodology error.
+# metals — irrelevant here). Stored as the two RAW (un-blended) per-index
+# tables, NOT pre-blended into one "Target Weight Pct" — the blend ratio
+# (default 60% GSCI / 40% BCOM) is applied dynamically in the dashboard
+# (a sidebar slider), not baked in here, so it can be changed live without
+# a re-ingest. Two commodities only exist on one side: GSCI has no Soybean
+# Meal/Oil sub-indices (GSCI-side = 0 every year); BCOM has no Feeder
+# Cattle (BCOM-side = 0 every year). Cocoa was dropped from BCOM entirely
+# from ~2005 until it was re-added in 2026 (BCOM-side = 0 for 2017-2025,
+# non-zero only in 2026). Source tables: S&P GSCI RPDW + Bloomberg BCOM
+# Target Weight annual announcement PDFs, 2017-2026 (see Index README for
+# the full source-URL list). Verified: at the default 60/40 ratio, each
+# year's blended 13 sum to exactly 100.000%, and the 2026 row matches the
+# single constant this replaced (hand-derived from the same two tables) to
+# within 0.6pp on every commodity — consistent with source-rounding noise.
 #
 # Dates before 2017 (our history starts 2016) use the 2017 weights (no
 # earlier GSCI/BCOM table available — see README 'Gaps'); dates from 2027
 # onward use the 2026 weights until a new year's row is added here at the
 # next January rebalance.
-TARGET_WEIGHT_BY_YEAR = {
-    2017: {"SRW": 11.2964, "HRW": 3.4870, "CORN": 19.4878, "SOYBEAN": 14.6089, "BEAN OIL": 3.0551, "MEAL": 3.1585, "COTTON": 5.3127, "HOG": 7.6003, "LIVE": 13.9777, "FEEDER": 2.7197, "COCOA": 0.8750, "SUGAR": 9.4452, "COFFEE": 4.9757},
-    2018: {"SRW": 10.6292, "HRW": 4.0423, "CORN": 18.3229, "SOYBEAN": 15.0687, "BEAN OIL": 3.0176, "MEAL": 3.3339, "COTTON": 5.3046, "HOG": 7.4378, "LIVE": 14.1900, "FEEDER": 2.9142, "COCOA": 0.8496, "SUGAR": 9.6729, "COFFEE": 5.2162},
-    2019: {"SRW": 11.0305, "HRW": 4.5617, "CORN": 18.4277, "SOYBEAN": 15.2636, "BEAN OIL": 3.4601, "MEAL": 3.8380, "COTTON": 5.4054, "HOG": 7.2472, "LIVE": 14.0215, "FEEDER": 3.4483, "COCOA": 0.8648, "SUGAR": 7.7053, "COFFEE": 4.7258},
-    2020: {"SRW": 10.8498, "HRW": 4.9404, "CORN": 19.3449, "SOYBEAN": 14.4596, "BEAN OIL": 3.2939, "MEAL": 3.7439, "COTTON": 4.9628, "HOG": 7.3442, "LIVE": 14.6710, "FEEDER": 3.3738, "COCOA": 0.8869, "SUGAR": 7.3618, "COFFEE": 4.7671},
-    2021: {"SRW": 11.4722, "HRW": 5.0333, "CORN": 18.9445, "SOYBEAN": 15.2830, "BEAN OIL": 3.6050, "MEAL": 4.0596, "COTTON": 4.5016, "HOG": 6.6397, "LIVE": 14.1483, "FEEDER": 3.0677, "COCOA": 0.9896, "SUGAR": 7.3320, "COFFEE": 4.9235},
-    2022: {"SRW": 11.1015, "HRW": 4.9172, "CORN": 20.4959, "SOYBEAN": 16.6314, "BEAN OIL": 3.6306, "MEAL": 4.0290, "COTTON": 4.4269, "HOG": 7.0880, "LIVE": 12.1992, "FEEDER": 2.6851, "COCOA": 0.7672, "SUGAR": 7.1049, "COFFEE": 4.9232},
-    2023: {"SRW": 11.5469, "HRW": 5.8090, "CORN": 20.6011, "SOYBEAN": 15.7464, "BEAN OIL": 3.7666, "MEAL": 4.0700, "COTTON": 4.9850, "HOG": 6.6068, "LIVE": 11.3321, "FEEDER": 2.6428, "COCOA": 0.6418, "SUGAR": 6.6008, "COFFEE": 5.6505},
-    2024: {"SRW": 10.3702, "HRW": 5.3299, "CORN": 19.9768, "SOYBEAN": 15.6286, "BEAN OIL": 3.7529, "MEAL": 3.9669, "COTTON": 4.0650, "HOG": 6.7798, "LIVE": 12.9716, "FEEDER": 3.6891, "COCOA": 0.7610, "SUGAR": 7.4355, "COFFEE": 5.2726},
-    2025: {"SRW": 8.9057, "HRW": 4.9451, "CORN": 16.7533, "SOYBEAN": 14.7068, "BEAN OIL": 3.7289, "MEAL": 3.9118, "COTTON": 4.1492, "HOG": 7.6294, "LIVE": 14.7663, "FEEDER": 4.9781, "COCOA": 1.8925, "SUGAR": 7.9090, "COFFEE": 5.7241},
-    2026: {"SRW": 8.0800, "HRW": 4.6342, "CORN": 16.0876, "SOYBEAN": 12.5572, "BEAN OIL": 3.1408, "MEAL": 3.2621, "COTTON": 3.6397, "HOG": 9.0225, "LIVE": 15.3577, "FEEDER": 5.6973, "COCOA": 4.4124, "SUGAR": 6.9328, "COFFEE": 7.1757},
+GSCI_WEIGHT_BY_YEAR = {
+    2017: {"SRW": 12.8104, "HRW": 3.6657, "CORN": 19.0382, "SOYBEAN": 13.7564, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 6.2278, "HOG": 8.8687, "LIVE": 16.0820, "FEEDER": 4.5329, "COCOA": 1.4584, "SUGAR": 9.5782, "COFFEE": 3.9811},
+    2018: {"SRW": 11.7508, "HRW": 4.3488, "CORN": 19.3118, "SOYBEAN": 14.2065, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 6.1799, "HOG": 8.5968, "LIVE": 15.7582, "FEEDER": 4.8570, "COCOA": 1.4160, "SUGAR": 9.6481, "COFFEE": 3.9260},
+    2019: {"SRW": 12.5504, "HRW": 5.1987, "CORN": 19.7661, "SOYBEAN": 14.2456, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 6.3727, "HOG": 8.6434, "LIVE": 15.7685, "FEEDER": 5.7472, "COCOA": 1.4413, "SUGAR": 6.9936, "COFFEE": 3.2724},
+    2020: {"SRW": 12.3223, "HRW": 5.4199, "CORN": 21.1955, "SOYBEAN": 13.4244, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 5.4458, "HOG": 8.8732, "LIVE": 16.8388, "FEEDER": 5.6230, "COCOA": 1.4782, "SUGAR": 6.5696, "COFFEE": 2.8094},
+    2021: {"SRW": 13.6967, "HRW": 5.4354, "CORN": 21.0710, "SOYBEAN": 14.5360, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 4.6621, "HOG": 7.8214, "LIVE": 16.3502, "FEEDER": 5.1129, "COCOA": 1.6493, "SUGAR": 6.6046, "COFFEE": 3.0604},
+    2022: {"SRW": 13.0733, "HRW": 5.0210, "CORN": 23.4960, "SOYBEAN": 16.6756, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 4.5110, "HOG": 8.4653, "LIVE": 13.5007, "FEEDER": 4.4751, "COCOA": 1.2786, "SUGAR": 6.5115, "COFFEE": 2.9918},
+    2023: {"SRW": 13.8728, "HRW": 6.3093, "CORN": 23.7352, "SOYBEAN": 15.1229, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 5.3108, "HOG": 7.6600, "LIVE": 12.5052, "FEEDER": 4.4047, "COCOA": 1.0697, "SUGAR": 6.0869, "COFFEE": 3.9223},
+    2024: {"SRW": 12.0206, "HRW": 5.4859, "CORN": 22.7199, "SOYBEAN": 15.0153, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 3.8428, "HOG": 7.9696, "LIVE": 15.1478, "FEEDER": 6.1485, "COCOA": 1.2683, "SUGAR": 7.1480, "COFFEE": 3.2333},
+    2025: {"SRW": 9.6238, "HRW": 4.8388, "CORN": 17.5321, "SOYBEAN": 13.4895, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 3.9465, "HOG": 9.5123, "LIVE": 17.9745, "FEEDER": 8.2968, "COCOA": 3.1541, "SUGAR": 7.6467, "COFFEE": 3.9849},
+    2026: {"SRW": 8.4211, "HRW": 4.4038, "CORN": 16.5656, "SOYBEAN": 11.0024, "BEAN OIL": 0.0, "MEAL": 0.0, "COTTON": 3.1096, "HOG": 11.7399, "LIVE": 18.4448, "FEEDER": 9.4954, "COCOA": 4.1769, "SUGAR": 6.0845, "COFFEE": 6.5560},
 }
-_TW_MIN_YEAR, _TW_MAX_YEAR = min(TARGET_WEIGHT_BY_YEAR), max(TARGET_WEIGHT_BY_YEAR)
+BCOM_WEIGHT_BY_YEAR = {
+    2017: {"SRW": 9.0254, "HRW": 3.2189, "CORN": 20.1622, "SOYBEAN": 15.8876, "BEAN OIL": 7.6377, "MEAL": 7.8962, "COTTON": 3.9399, "HOG": 5.6976, "LIVE": 10.8212, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 9.2458, "COFFEE": 6.4677},
+    2018: {"SRW": 8.9469, "HRW": 3.5826, "CORN": 16.8396, "SOYBEAN": 16.3619, "BEAN OIL": 7.5441, "MEAL": 8.3347, "COTTON": 3.9917, "HOG": 5.6992, "LIVE": 11.8377, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 9.7101, "COFFEE": 7.1515},
+    2019: {"SRW": 8.7507, "HRW": 3.6062, "CORN": 16.4200, "SOYBEAN": 16.7907, "BEAN OIL": 8.6503, "MEAL": 9.5951, "COTTON": 3.9545, "HOG": 5.1529, "LIVE": 11.4009, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 8.7730, "COFFEE": 6.9058},
+    2020: {"SRW": 8.6411, "HRW": 4.2211, "CORN": 16.5691, "SOYBEAN": 16.0124, "BEAN OIL": 8.2349, "MEAL": 9.3597, "COTTON": 4.2382, "HOG": 5.0506, "LIVE": 11.4192, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 8.5502, "COFFEE": 7.7037},
+    2021: {"SRW": 8.1355, "HRW": 4.4301, "CORN": 15.7549, "SOYBEAN": 16.4035, "BEAN OIL": 9.0125, "MEAL": 10.1489, "COTTON": 4.2609, "HOG": 4.8672, "LIVE": 10.8454, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 8.4231, "COFFEE": 7.7181},
+    2022: {"SRW": 8.1438, "HRW": 4.7615, "CORN": 15.9957, "SOYBEAN": 16.5651, "BEAN OIL": 9.0766, "MEAL": 10.0724, "COTTON": 4.3008, "HOG": 5.0219, "LIVE": 10.2469, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 7.9950, "COFFEE": 7.8204},
+    2023: {"SRW": 8.0581, "HRW": 5.0587, "CORN": 15.9000, "SOYBEAN": 16.6816, "BEAN OIL": 9.4165, "MEAL": 10.1751, "COTTON": 4.4963, "HOG": 5.0270, "LIVE": 9.5723, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 7.3717, "COFFEE": 8.2427},
+    2024: {"SRW": 7.8947, "HRW": 5.0960, "CORN": 15.8622, "SOYBEAN": 16.5485, "BEAN OIL": 9.3823, "MEAL": 9.9174, "COTTON": 4.3984, "HOG": 4.9951, "LIVE": 9.7072, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 7.8666, "COFFEE": 8.3317},
+    2025: {"SRW": 7.8285, "HRW": 5.1045, "CORN": 15.5850, "SOYBEAN": 16.5327, "BEAN OIL": 9.3222, "MEAL": 9.7794, "COTTON": 4.4533, "HOG": 4.8052, "LIVE": 9.9540, "FEEDER": 0.0, "COCOA": 0.0, "SUGAR": 8.3024, "COFFEE": 8.3329},
+    2026: {"SRW": 7.5685, "HRW": 4.9798, "CORN": 15.3705, "SOYBEAN": 14.8895, "BEAN OIL": 7.8521, "MEAL": 8.1552, "COTTON": 4.4349, "HOG": 4.9465, "LIVE": 10.7271, "FEEDER": 0.0, "COCOA": 4.7657, "SUGAR": 8.2052, "COFFEE": 8.1051},
+}
+_TW_MIN_YEAR, _TW_MAX_YEAR = min(GSCI_WEIGHT_BY_YEAR), max(GSCI_WEIGHT_BY_YEAR)
 
-def target_weight_pct_for(commodity: str, dates: pd.Series) -> pd.Series:
-    """Per-row target weight looked up by each date's calendar year,
-    clamped to the years we actually have a table for."""
+def _weight_pct_for(table: dict, commodity: str, dates: pd.Series) -> pd.Series:
+    """Per-row weight looked up by each date's calendar year, clamped to
+    the years we actually have a table for."""
     years = dates.dt.year.clip(_TW_MIN_YEAR, _TW_MAX_YEAR)
-    return years.map(lambda y: TARGET_WEIGHT_BY_YEAR[y][commodity])
+    return years.map(lambda y: table[y][commodity])
+
+def gsci_weight_pct_for(commodity: str, dates: pd.Series) -> pd.Series:
+    return _weight_pct_for(GSCI_WEIGHT_BY_YEAR, commodity, dates)
+
+def bcom_weight_pct_for(commodity: str, dates: pd.Series) -> pd.Series:
+    return _weight_pct_for(BCOM_WEIGHT_BY_YEAR, commodity, dates)
 
 FETCH_RETRIES = 3
 FETCH_BACKOFF = 5
@@ -255,7 +276,8 @@ def fetch_commodity(ld, name: str, cfg: dict, start: str, end: str) -> tuple[pd.
     df["Lot Size"] = cfg["lot_size"]
     df["Unit"] = cfg["unit"]
     df["Multiplier"] = cfg["multiplier"]
-    df["Target Weight Pct"] = target_weight_pct_for(name, df["Date"])
+    df["GSCI Weight Pct"] = gsci_weight_pct_for(name, df["Date"])
+    df["BCOM Weight Pct"] = bcom_weight_pct_for(name, df["Date"])
     log.info("  %s -> %d rows, %s to %s", name, len(df),
              df["Date"].min().date() if len(df) else "—", df["Date"].max().date() if len(df) else "—")
     return df, px_s

@@ -50,14 +50,21 @@ this project assumed after a few `v1` tickers came back `Access Denied`:
 reconstruction that used a static January-reference lot count. The real
 formula does no such per-year anchoring:
 
-Target weight (`Code/ingest_lseg.py`'s `TARGET_WEIGHT_BY_YEAR`, added
-2026-08-28) is **per calendar year, 2017-2026** — not a single constant
+Target weight (`Code/ingest_lseg.py`'s `GSCI_WEIGHT_BY_YEAR` +
+`BCOM_WEIGHT_BY_YEAR`, added 2026-08-28, split into two raw tables
+2026-08-31) is **per calendar year, 2017-2026** — not a single constant
 held flat across all history, which understated/overstated older dates'
-deviation by using today's weight retroactively. Each year = 60% S&P GSCI
-RPDW + 40% Bloomberg BCOM Target Weight, each re-weighted to sum to 100%
-within just these 13 ag/livestock commodities (both indices track ~24
-commodities total incl. energy/other metals — irrelevant here); full
-precision, not rounded (rounding to whole numbers previously summed to
+deviation by using today's weight retroactively. Each year = a blend of
+S&P GSCI RPDW + Bloomberg BCOM Target Weight, each re-weighted to sum to
+100% within just these 13 ag/livestock commodities (both indices track
+~24 commodities total incl. energy/other metals — irrelevant here). The
+blend ratio (default 60% GSCI / 40% BCOM, matching the original workbook)
+is **NOT baked into the ingest** — the two raw tables are written to
+`index_positioning.parquet` as separate `GSCI Weight Pct` / `BCOM Weight
+Pct` columns, and `Dashboard/app.py` blends them live from a sidebar
+slider (`target_weight_pivot()`), so the ratio can be changed on the fly
+across every tab (Vs Target, Target Weights, Snapshot) with no re-ingest.
+Full precision, not rounded (rounding to whole numbers previously summed to
 101% instead of 100%). Two commodities exist on only one side of the
 blend: GSCI has no Soybean Meal/Oil sub-indices (their GSCI-side
 contribution is 0), BCOM has no Feeder Cattle (its BCOM-side contribution
