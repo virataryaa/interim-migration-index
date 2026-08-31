@@ -681,12 +681,6 @@ with tab_is:
         st.plotly_chart(fig_grp, use_container_width=True)
 
     st.markdown(lbl("Implied Energy + Metals (at Target) — Indirect Estimate"), unsafe_allow_html=True)
-    st.caption("CFTC's CIT report has no Energy/Metals data at all — this is NOT an observed position. "
-              "Backed out from what we DO know: our actual Ags $ pool, and Ags' target share of the "
-              f"full GSCI/BCOM index ({gsci_pct}% GSCI / {100-gsci_pct}% BCOM, same slider as the "
-              "sidebar). Implied Total Index $ = Ags Actual $ ÷ Ags Target %; Implied Energy+Metals $ "
-              "= Implied Total Index $ − Ags Actual $. Assumes Energy+Metals itself sits exactly at "
-              "its own target weight — unverifiable, since no CIT data exists for those sectors.")
     ags_pct_series = ags_group_pct_series(total_pool.index.to_series(), blend_ratio)
     implied_total = total_pool / (ags_pct_series / 100)
     implied_energy_metals = implied_total - total_pool
