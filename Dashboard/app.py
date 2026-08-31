@@ -657,6 +657,11 @@ with tab_should:
                                          line=dict(color=COLORS.get(comm), width=1.6),
                                          hovertemplate=f"%{{x|%d %b %Y}}<br>{comm}: %{{y:,.0f}} lots<extra></extra>"))
     fig_dev.add_hline(y=0, line_color="#cccccc", line_width=1)
+    _dev_min, _dev_max = dev_df["Date"].min(), dev_df["Date"].max()
+    for _yr in range(_dev_min.year, _dev_max.year + 1):
+        _jan1 = pd.Timestamp(f"{_yr}-01-01")
+        if _dev_min <= _jan1 <= _dev_max:
+            fig_dev.add_vline(x=_jan1, line_color="#9ca3af", line_width=1, line_dash="dot")
     st.plotly_chart(fig_dev, use_container_width=True)
 
     st.markdown(lbl("Over / Under vs Target Weight (in VaR $)"), unsafe_allow_html=True)
