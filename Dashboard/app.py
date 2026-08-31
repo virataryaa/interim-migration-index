@@ -493,6 +493,50 @@ def build_deviation_var_table_html(tbl: pd.DataFrame, group_of: dict, colors: di
               "<th>Deviation (lots)</th><th>Deviation VaR ($M)</th></tr>")
     return f"{css}<div class='idxdevvar-wrap'><table class='idxdevvar'><thead>{header}</thead><tbody>{''.join(rows)}</tbody></table></div>"
 
+def build_target_weights_table_html(wt_by_year: pd.DataFrame, group_of: dict, colors: dict) -> str:
+    """wt_by_year: index=Year, columns=Commodity (already ordered by group),
+    values=Target Weight Pct. One row per year, most recent first, plus a
+    Total column so the 100%-per-year invariant is checkable at a glance."""
+    commodities = list(wt_by_year.columns)
+    css = """<style>
+      .idxtw-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px}
+      table.idxtw{border-collapse:collapse;width:100%;font-size:.8rem;
+        font-family:-apple-system,Helvetica Neue,sans-serif}
+      table.idxtw th,table.idxtw td{padding:8px 14px;text-align:right;white-space:nowrap}
+      table.idxtw th:first-child,table.idxtw td:first-child{text-align:left;font-weight:600}
+      table.idxtw thead th{background:#0a2463;color:#dde4f0;font-weight:500;letter-spacing:.03em;
+        font-size:.68rem;text-transform:uppercase}
+      table.idxtw tbody tr:nth-child(even) td{background-color:rgba(0,0,0,.02)}
+      table.idxtw td.grp-start,table.idxtw th.grp-start{box-shadow:inset 2px 0 0 #c7cdd6}
+      table.idxtw td.total-col,table.idxtw th.total-col{box-shadow:inset 2px 0 0 #c7cdd6;
+        font-weight:700;color:#0a2463}
+      .idxtw-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+    </style>"""
+
+    header_cells, prev_grp = ["<th>Year</th>"], None
+    for c in commodities:
+        grp = group_of.get(c, "")
+        cls = " class='grp-start'" if prev_grp is not None and grp != prev_grp else ""
+        dot = colors.get(c, "#999")
+        header_cells.append(f"<th{cls}><span class='idxtw-dot' style='background:{dot}'></span>{c}</th>")
+        prev_grp = grp
+    header_cells.append("<th class='total-col'>Total</th>")
+
+    body_rows = []
+    for y, row in wt_by_year.sort_index(ascending=False).iterrows():
+        cells, prev_grp = [f"<td>{y}</td>"], None
+        for c in commodities:
+            grp = group_of.get(c, "")
+            cls = "grp-start" if prev_grp is not None and grp != prev_grp else ""
+            v = row.get(c, np.nan)
+            cells.append(f"<td class='{cls}'>{v:.2f}%</td>" if pd.notna(v) else f"<td class='{cls}'>—</td>")
+            prev_grp = grp
+        cells.append(f"<td class='total-col'>{row.sum():.2f}%</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    return (f"{css}<div class='idxtw-wrap'><table class='idxtw'><thead><tr>"
+            f"{''.join(header_cells)}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>")
+
 df = load_data()
 all_commodities = sorted(df["Commodity"].unique(), key=lambda c: list(GROUP_OF.keys()).index(c) if c in GROUP_OF else 99)
 max_date = df["Date"].max()
@@ -510,8 +554,8 @@ with st.sidebar:
     )
     st.markdown(f"*Data through {max_date.strftime('%d %b %Y')}*")
 
-tab_is, tab_should, tab_snapshot, tab_var, tab_detail = st.tabs(
-    ["Index Positioning", "Vs Target", "Snapshot", "Index in VaR", "Detail"]
+tab_is, tab_should, tab_weights, tab_snapshot, tab_var, tab_detail = st.tabs(
+    ["Index Positioning", "Vs Target", "Target Weights", "Snapshot", "Index in VaR", "Detail"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -645,27 +689,34 @@ with tab_should:
     st.markdown(build_weekly_deviation_html(weekly_dev.tail(n_weeks), all_commodities, GROUP_OF),
                unsafe_allow_html=True)
 
-    with st.expander("Target weights & CFTC RIC reference"):
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            st.markdown("**GSCI/BCOM target weight (ag-only, re-weighted) — by year**")
-            st.caption("60% S&P GSCI RPDW + 40% Bloomberg BCOM Target Weight, each re-weighted "
-                      "to sum to 100% within just these 13 commodities. Re-derived at each "
-                      "January rebalance — not a single constant across years.")
-            yr_ref = df.assign(Year=df["Date"].dt.year)
-            wt_by_year = yr_ref.pivot_table(index="Year", columns="Commodity",
-                                            values="Target Weight Pct", aggfunc="last")
-            wt_by_year = wt_by_year[[c for c in all_commodities if c in wt_by_year.columns]]
-            st.dataframe(wt_by_year.style.format("{:.2f}%"), use_container_width=True)
-        with rc2:
-            st.markdown("**CFTC CIT RIC scheme**")
-            st.markdown(
-                "| Series | RIC pattern | Field |\n|---|---|---|\n"
-                "| Index Long | `4<CFTC_CODE>PLNG` | `COMM_LAST` |\n"
-                "| Index Short | `4<CFTC_CODE>PSHT` | `COMM_LAST` |\n"
-                "| Total OI | `3CFTC<CFTC_CODE>OI` | `COMM_LAST` |\n"
-                "| Price | see README (`price_ric` per commodity) | `TRDPRC_1` |"
-            )
+    with st.expander("CFTC CIT RIC reference"):
+        st.markdown(
+            "| Series | RIC pattern | Field |\n|---|---|---|\n"
+            "| Index Long | `4<CFTC_CODE>PLNG` | `COMM_LAST` |\n"
+            "| Index Short | `4<CFTC_CODE>PSHT` | `COMM_LAST` |\n"
+            "| Total OI | `3CFTC<CFTC_CODE>OI` | `COMM_LAST` |\n"
+            "| Price | see README (`price_ric` per commodity) | `TRDPRC_1` |"
+        )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TARGET WEIGHTS — the full GSCI/BCOM target weight table, one row per year,
+# so the per-calendar-year weights driving every deviation calc are visible
+# and auditable on their own, not buried in an expander.
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_weights:
+    st.markdown(lbl("GSCI/BCOM Target Weight — by Year"), unsafe_allow_html=True)
+    st.caption("60% S&P GSCI RPDW + 40% Bloomberg BCOM Target Weight, each re-weighted to sum "
+              "to 100% within just these 13 commodities. Re-derived at each January rebalance — "
+              "not a single constant held flat across years (see README for sources and the two "
+              "indices' coverage gaps: GSCI has no Soybean Meal/Oil, BCOM has no Feeder Cattle, "
+              "Cocoa was out of BCOM 2017-2025).")
+    yr_ref = df.assign(Year=df["Date"].dt.year)
+    wt_by_year = yr_ref.pivot_table(index="Year", columns="Commodity",
+                                    values="Target Weight Pct", aggfunc="last")
+    wt_cols = sorted([c for c in all_commodities if c in wt_by_year.columns],
+                     key=lambda c: list(GROUPS.keys()).index(GROUP_OF.get(c, "")) if GROUP_OF.get(c, "") in GROUPS else 99)
+    wt_by_year = wt_by_year[wt_cols]
+    st.markdown(build_target_weights_table_html(wt_by_year, GROUP_OF, COLORS), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INDEX IN VAR — Index Traders' lots converted to a 1-day 99% dollar VaR
