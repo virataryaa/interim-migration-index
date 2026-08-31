@@ -610,8 +610,9 @@ with st.sidebar:
     st.caption(f"BCOM weight: {100 - gsci_pct}%")
 blend_ratio = gsci_pct / 100
 
-tab_is, tab_should, tab_weights, tab_snapshot, tab_var, tab_detail = st.tabs(
-    ["Index Positioning", "Vs Target", "Target Weights", "Snapshot", "Index in VaR", "Detail"]
+tab_snapshot, tab_is, tab_should, tab_var, tab_detail, tab_weights = st.tabs(
+    ["Snapshot", "Positioning Over Time", "Deviation vs Target", "Risk (VaR)",
+     "Commodity COT Detail", "Target Weights (Reference)"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
