@@ -61,6 +61,38 @@ COLORS = {
     "HOG": "#c0392b", "LIVE": "#7b2d8b", "FEEDER": "#d35400",
 }
 
+# ── Ags share of the FULL GSCI/BCOM index (Energy + Ind. Metals + Prec.
+#    Metals + Ags) — Romain's idea (2026-08-31): CFTC's CIT report only
+#    covers the 13 ag/livestock commodities we already track — there is no
+#    CIT data for Energy or Metals at all (structural CFTC report gap, not
+#    an ingest limitation). But since we know both (a) our actual Ags $
+#    pool from CIT data and (b) what % of the FULL published index Ags is
+#    SUPPOSED to be, we can back out an INDIRECT "at target" implied size
+#    for Energy+Metals: Implied Total Index $ = Ags Actual $ / Ags Target
+#    %; Implied Energy+Metals $ = Implied Total Index $ - Ags Actual $.
+#    This is a benchmark/estimate, not an observed position — it assumes
+#    Energy+Metals itself sits exactly at ITS OWN target weight, which
+#    can't be verified (no CIT data for those sectors exists to check).
+#    Source: Target weight/GSCI_BCOM_weights_2017_2026.xlsx, "Published
+#    group/sector weights" section of each sheet — full precision, not the
+#    rounded (~2dp) 2017-2023 figures. GSCI Ags = Agriculture + Livestock
+#    groups; BCOM Ags = Grains + Softs + Livestock groups (BCOM splits ags
+#    into 3 groups where GSCI uses 2 — both cover the same commodities).
+GSCI_AGS_GROUP_PCT_BY_YEAR = {2017: 25.37, 2018: 25.78, 2019: 22.063, 2020: 23.141, 2021: 27.2841,
+                              2022: 27.8422, 2023: 23.8357, 2024: 26.4131, 2025: 25.9977, 2026: 28.2025}
+BCOM_AGS_GROUP_PCT_BY_YEAR = {2017: 36.75, 2018: 36.43, 2019: 35.89, 2020: 35.2, 2021: 35.45,
+                              2022: 34.95, 2023: 34.67, 2024: 35.6959, 2025: 36.0859, 2026: 35.965}
+_AGS_MIN_YEAR, _AGS_MAX_YEAR = min(GSCI_AGS_GROUP_PCT_BY_YEAR), max(GSCI_AGS_GROUP_PCT_BY_YEAR)
+
+def ags_group_pct_series(dates: pd.Series, blend_ratio: float) -> pd.Series:
+    """Blended Ags-share-of-full-index %, looked up per date's calendar
+    year (clamped to the years we have a table for) — same blend_ratio
+    (GSCI weight) as the per-commodity target weight slider."""
+    years = dates.dt.year.clip(_AGS_MIN_YEAR, _AGS_MAX_YEAR)
+    gsci = years.map(GSCI_AGS_GROUP_PCT_BY_YEAR)
+    bcom = years.map(BCOM_AGS_GROUP_PCT_BY_YEAR)
+    return gsci * blend_ratio + bcom * (1 - blend_ratio)
+
 @st.cache_data(ttl=1800)
 def load_data() -> pd.DataFrame:
     df = pd.read_parquet(DB / "index_positioning.parquet")
@@ -647,6 +679,29 @@ with tab_is:
                 fig_grp.add_trace(go.Scatter(x=s.index, y=s.values, name=grp, line=dict(width=1.6),
                                              hovertemplate=f"%{{x|%d %b %Y}}<br>{grp}: $%{{y:,.0f}}<extra></extra>"))
         st.plotly_chart(fig_grp, use_container_width=True)
+
+    st.markdown(lbl("Implied Energy + Metals (at Target) — Indirect Estimate"), unsafe_allow_html=True)
+    st.caption("CFTC's CIT report has no Energy/Metals data at all — this is NOT an observed position. "
+              "Backed out from what we DO know: our actual Ags $ pool, and Ags' target share of the "
+              f"full GSCI/BCOM index ({gsci_pct}% GSCI / {100-gsci_pct}% BCOM, same slider as the "
+              "sidebar). Implied Total Index $ = Ags Actual $ ÷ Ags Target %; Implied Energy+Metals $ "
+              "= Implied Total Index $ − Ags Actual $. Assumes Energy+Metals itself sits exactly at "
+              "its own target weight — unverifiable, since no CIT data exists for those sectors.")
+    ags_pct_series = ags_group_pct_series(total_pool.index.to_series(), blend_ratio)
+    implied_total = total_pool / (ags_pct_series / 100)
+    implied_energy_metals = implied_total - total_pool
+
+    fig_iem = base_fig(height=380, yaxis_title="USD")
+    fig_iem.add_trace(go.Scatter(x=total_pool.index, y=total_pool.values, name="Ags (Actual, from CIT)",
+                                 line=dict(color=NAVY, width=1.8),
+                                 hovertemplate="%{x|%d %b %Y}<br>Ags: $%{y:,.0f}<extra></extra>"))
+    fig_iem.add_trace(go.Scatter(x=implied_energy_metals.index, y=implied_energy_metals.values,
+                                 name="Energy+Metals (Implied, at target)", line=dict(color=AMBER, width=1.8, dash="dash"),
+                                 hovertemplate="%{x|%d %b %Y}<br>Implied Energy+Metals: $%{y:,.0f}<extra></extra>"))
+    fig_iem.add_trace(go.Scatter(x=implied_total.index, y=implied_total.values, name="Implied Total Index",
+                                 line=dict(color=GREY, width=1.4, dash="dot"),
+                                 hovertemplate="%{x|%d %b %Y}<br>Implied Total: $%{y:,.0f}<extra></extra>"))
+    st.plotly_chart(fig_iem, use_container_width=True)
 
     st.markdown(lbl("What's Driving the Nominal $ Change — Position vs Price"), unsafe_allow_html=True)
     lookback_opts = {"1 Week": 1, "4 Weeks": 4, "13 Weeks (Quarter)": 13, "52 Weeks (1 Year)": 52}
